@@ -5,44 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>PocketDock</title>
-<style>
-  body { font-family: -apple-system, Arial, sans-serif; margin: 0; padding: 24px; line-height: 1.5; }
-  main { max-width: 520px; margin: 0 auto; }
-  button { font-size: 18px; padding: 14px 20px; border-radius: 10px; border: 0; background: #1f6feb; color: #fff; width: 100%; }
-  p { margin: 10px 0; }
-  video { width: 100%; margin-top: 16px; border-radius: 10px; background: #000; }
-</style>
+<link rel="stylesheet" href="style.css">
 </head>
-<body>
-<main>
+<body data-state="connecting">
+<main class="card">
   <h1>PocketDock</h1>
-  <p id="secure"></p>
-  <p id="server">Máy chủ: đang kiểm tra...</p>
-  <button id="btn">Xin quyền camera và micro</button>
-  <p id="result"></p>
-  <video id="preview" playsinline autoplay muted></video>
+  <p class="sub">Kết nối thiết bị với máy tính</p>
+  <div class="dot"></div>
+  <p id="status">Đang kết nối...</p>
+  <p id="detail"></p>
 </main>
-<script>
-  const $ = id => document.getElementById(id);
-
-  $('secure').textContent = window.isSecureContext
-    ? 'Kết nối an toàn (HTTPS): có'
-    : 'Kết nối an toàn (HTTPS): KHÔNG, camera sẽ bị chặn';
-
-  fetch('/health')
-    .then(r => r.text())
-    .then(t => { $('server').textContent = 'Máy chủ: ' + t; })
-    .catch(() => { $('server').textContent = 'Máy chủ: không phản hồi'; });
-
-  $('btn').addEventListener('click', async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      $('preview').srcObject = stream;
-      $('result').textContent = 'Đã được cấp quyền. Camera: ' + stream.getVideoTracks()[0].label;
-    } catch (e) {
-      $('result').textContent = 'Lỗi: ' + e.name + ' - ' + e.message;
-    }
-  });
-</script>
+<script src="app.js"></script>
 </body>
 </html>
