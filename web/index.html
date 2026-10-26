@@ -14,6 +14,23 @@
   <div class="dot"></div>
   <p id="status">Đang kết nối...</p>
   <p id="detail"></p>
+
+  <section id="media" hidden>
+    <video id="screen" playsinline autoplay muted></video>
+    <div class="row">
+      <button id="unmute" type="button">Bật tiếng</button>
+      <button id="ping" type="button">Gửi ping</button>
+    </div>
+    <ul class="info">
+      <li id="line-peer">Kết nối trực tiếp: đang khởi tạo</li>
+      <li id="line-channel">Kênh điều khiển: chưa mở</li>
+      <li id="line-route">Đường truyền: chưa rõ</li>
+      <li id="line-video">Hình ảnh: chưa nhận</li>
+      <li id="line-audio">Âm thanh: chưa nhận</li>
+      <li id="line-rtt">Độ trễ ping: chưa đo</li>
+    </ul>
+    <pre id="log"></pre>
+  </section>
 </main>
 <script src="app.js"></script>
 </body>

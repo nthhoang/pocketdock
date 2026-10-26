@@ -10,6 +10,11 @@ import io.ktor.server.plugins.defaultheaders.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.io.File
 import kotlin.time.Duration.Companion.seconds
 
@@ -25,10 +30,28 @@ private fun defaultStore(): SessionStore {
     return SessionStore(ttlMillis = ttlSeconds * 1000)
 }
 
-fun Application.module(store: SessionStore = defaultStore()) {
+private fun iceServersFromEnv(): JsonArray {
+    val urls = (System.getenv("STUN_URLS") ?: "stun:stun.l.google.com:19302")
+        .split(',')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+    return buildJsonArray {
+        add(
+            buildJsonObject {
+                put("urls", buildJsonArray { urls.forEach { add(it) } })
+            }
+        )
+    }
+}
+
+fun Application.module(
+    store: SessionStore = defaultStore(),
+    iceServers: JsonArray = iceServersFromEnv(),
+) {
     val webDir = File(System.getenv("WEB_DIR") ?: "../web").absoluteFile
     log.info("Thư mục web: $webDir")
     log.info("Token hết hạn sau ${store.ttlMillis / 1000} giây")
+    log.info("Máy chủ STUN/TURN gửi cho hai bên: $iceServers")
 
     install(CallLogging)
     install(DefaultHeaders) {
@@ -42,7 +65,7 @@ fun Application.module(store: SessionStore = defaultStore()) {
 
     routing {
         get("/health") { call.respondText("ok") }
-        signaling(store)
+        signaling(store, iceServers)
         staticFiles("/", webDir)
     }
 }

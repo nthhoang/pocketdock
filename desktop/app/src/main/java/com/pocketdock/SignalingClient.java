@@ -42,6 +42,10 @@ public final class SignalingClient implements WebSocket.Listener {
         sendText(object.toString());
     }
 
+    public void send(JsonObject object) {
+        sendText(object.toString());
+    }
+
     private synchronized void sendText(String text) {
         WebSocket ws = socket;
         if (ws == null) return;

@@ -12,11 +12,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
@@ -42,6 +45,7 @@ private fun msg(type: String, vararg fields: Pair<String, Any?>): String = build
     for ((key, value) in fields) {
         when (value) {
             null -> put(key, JsonNull)
+            is JsonElement -> put(key, value)
             is Number -> put(key, value)
             else -> put(key, value.toString())
         }
@@ -68,7 +72,7 @@ private suspend fun WebSocketSession.closeQuietly(reason: String) {
     }
 }
 
-fun Route.signaling(store: SessionStore) {
+fun Route.signaling(store: SessionStore, iceServers: JsonArray) {
     val rooms = ConcurrentHashMap<String, Room>()
 
     webSocket("/ws") {
@@ -108,6 +112,7 @@ fun Route.signaling(store: SessionStore) {
                                 "sessionId" to session.id,
                                 "token" to session.token,
                                 "expiresInSec" to store.ttlMillis / 1000,
+                                "iceServers" to iceServers,
                             )
                         )
                         launch {
@@ -142,7 +147,9 @@ fun Route.signaling(store: SessionStore) {
 
                     "approve" -> {
                         val room = myRoom ?: continue
-                        if (store.approve(room.session.id)) room.phone?.sendMsg(msg("joined"))
+                        if (store.approve(room.session.id)) {
+                            room.phone?.sendMsg(msg("joined", "iceServers" to iceServers))
+                        }
                     }
 
                     "reject" -> {
@@ -154,6 +161,36 @@ fun Route.signaling(store: SessionStore) {
                             it.sendMsg(msg("rejected"))
                             it.closeQuietly("rejected")
                         }
+                    }
+
+                    // Chuyển tiếp thông tin nối. Chỉ làm khi máy tính đã bấm Cho phép,
+                    // và chỉ chuyển các trường cần thiết, không chuyển nguyên văn tin nhận được.
+                    "offer" -> {
+                        val room = myRoom ?: continue
+                        if (room.session.state != SessionStore.State.CONNECTED) continue
+                        val sdp = m.str("sdp") ?: continue
+                        room.phone?.sendMsg(msg("offer", "sdp" to sdp))
+                    }
+
+                    "answer" -> {
+                        val room = joinedRoom ?: continue
+                        if (room.session.state != SessionStore.State.CONNECTED) continue
+                        val sdp = m.str("sdp") ?: continue
+                        room.desktop.sendMsg(msg("answer", "sdp" to sdp))
+                    }
+
+                    "ice" -> {
+                        val room = myRoom ?: joinedRoom ?: continue
+                        if (room.session.state != SessionStore.State.CONNECTED) continue
+                        val candidate = m.str("candidate") ?: continue
+                        val out = msg(
+                            "ice",
+                            "candidate" to candidate,
+                            "sdpMid" to m.str("sdpMid"),
+                            "sdpMLineIndex" to (m["sdpMLineIndex"] as? JsonPrimitive)?.intOrNull,
+                        )
+                        val target = if (myRoom != null) room.phone else room.desktop
+                        target?.sendMsg(out)
                     }
 
                     "bye" -> {
