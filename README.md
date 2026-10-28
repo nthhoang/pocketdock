@@ -14,8 +14,8 @@ Dự án này bao gồm ba thành phần chính:
 - Hỗ trợ xác nhận thiết bị trước khi nối
 - Tự động hết hạn token để tránh lộ thông tin và bị lạm dụng
 - Hỗ trợ STUN/TURN thông qua cấu hình môi trường
-- Cung cấp giao diện web trên điện thoại để tham gia kết nối mà không cần cài app riêng
 - Hiển thị trạng thái và độ trễ kết nối, hỗ trợ ping kiểm tra đường truyền
+- Cung cấp giao diện web trên điện thoại để tham gia kết nối mà không cần cài app riêng
 
 ## Kiến trúc hệ thống
 
