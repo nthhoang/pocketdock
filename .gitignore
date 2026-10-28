@@ -3,5 +3,5 @@ build/
 .idea/
 *.class
 *.log
-.env
 dist/
+.env
