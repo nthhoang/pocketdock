@@ -1,0 +1,54 @@
+name: build-w1
+on:
+  push:
+    paths:
+      - 'w1/**'
+      - '.github/workflows/build-w1.yml'
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build Java probes
+        shell: bash
+        working-directory: w1/probe
+        run: ./gradlew installDist
+
+      - name: Package Java probes
+        shell: bash
+        working-directory: w1/probe
+        run: >
+          jpackage --type app-image --name ScreenProbe
+          --input build/install/probe/lib --main-jar probe.jar
+          --main-class com.pocketdock.probe.ScreenProbe
+          --add-launcher MouseProbe=mouse.properties
+          --add-modules java.base,java.desktop,java.logging,java.management,jdk.management
+          --win-console --dest dist
+
+      - name: Build audio probe
+        shell: bash
+        working-directory: w1/audio
+        run: dotnet publish AudioProbe.csproj -c Release -o publish
+
+      - name: Assemble
+        shell: bash
+        run: |
+          mkdir -p out/PocketDock-W1
+          cp -r w1/probe/dist/ScreenProbe out/PocketDock-W1/ScreenProbe
+          cp -r w1/audio/publish out/PocketDock-W1/AudioProbe
+          cp w1/pack/chay-thu.bat w1/pack/HUONG-DAN.txt out/PocketDock-W1/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PocketDock-W1-windows
+          path: out

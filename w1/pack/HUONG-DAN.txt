@@ -1,0 +1,10 @@
+BO THU NHO POCKETDOCK TREN WINDOWS (W1)
+
+1. Giai nen/chep thu muc nay vao mot cho bat ky tren may Windows (vi du Desktop).
+2. Bam doi vao file chay-thu.bat va lam theo huong dan tren man hinh.
+3. Neu Windows hien canh bao "Windows protected your PC": bam "More info" roi "Run anyway".
+   (Do chuong trinh chua co chu ky so, la binh thuong.)
+4. Cuoi cung chep thu muc "ketqua" ve.
+
+Chuong trinh khong cai dat gi len may, khong can quyen quan tri, khong can Internet.
+Muon don dep: xoa thu muc nay la xong.
