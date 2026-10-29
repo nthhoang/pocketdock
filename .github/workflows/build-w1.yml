@@ -46,7 +46,7 @@ jobs:
           mkdir -p out/PocketDock-W1
           cp -r w1/probe/dist/ScreenProbe out/PocketDock-W1/ScreenProbe
           cp -r w1/audio/publish out/PocketDock-W1/AudioProbe
-          cp w1/pack/chay-thu.bat w1/pack/HUONG-DAN.txt out/PocketDock-W1/
+          cp w1/pack/* out/PocketDock-W1/
 
       - uses: actions/upload-artifact@v4
         with:
