@@ -31,7 +31,6 @@ public final class RemoteVideoView implements VideoTrackSink {
     private final AtomicLong frames = new AtomicLong();
     private volatile int lastWidth;
     private volatile int lastHeight;
-    private volatile boolean active = true;
 
     public ImageView getNode() {
         return imageView;
@@ -63,8 +62,8 @@ public final class RemoteVideoView implements VideoTrackSink {
 
     @Override
     public void onVideoFrame(VideoFrame frame) {
-        if (!active) return;
         try {
+            frames.incrementAndGet();
             VideoFrameBuffer buffer = frame.buffer;
             int w = buffer.getWidth();
             int h = buffer.getHeight();
@@ -82,13 +81,22 @@ public final class RemoteVideoView implements VideoTrackSink {
             }
             lastWidth = w;
             lastHeight = h;
-            frames.incrementAndGet();
 
             if (drawPending.compareAndSet(false, true)) {
                 Platform.runLater(this::draw);
             }
         } catch (Throwable ignored) {
             // một khung hình lỗi thì bỏ qua
+        } finally {
+            // QUAN TRỌNG: khung hình nhận từ WebRTC nằm trong bộ nhớ gốc của thư viện (không phải
+            // bộ nhớ của Java), nên bộ dọn rác của Java không dọn được. Dùng xong phải báo giải phóng,
+            // nếu không mỗi khung hình (khoảng 1,4 MB ở 720p) sẽ bị giữ lại mãi và RAM đầy sau vài phút.
+            // Dữ liệu đã được sao sang mảng của mình ở trên nên giải phóng ở đây là an toàn.
+            try {
+                frame.release();
+            } catch (Throwable ignored) {
+                // bỏ qua
+            }
         }
     }
 
