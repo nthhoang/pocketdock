@@ -29,6 +29,7 @@ import dev.onvoid.webrtc.media.audio.AudioTrack;
 import dev.onvoid.webrtc.media.audio.CustomAudioSource;
 import dev.onvoid.webrtc.media.video.CustomVideoSource;
 import dev.onvoid.webrtc.media.video.VideoTrack;
+import dev.onvoid.webrtc.media.video.VideoTrackSink;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -39,7 +40,7 @@ import java.util.List;
  * Một cuộc nối trực tiếp với một điện thoại.
  * Máy tính là bên tạo đề nghị (offer). Có bốn làn:
  * hình và tiếng từ máy tính sang điện thoại (đang gửi nguồn thử),
- * hình và tiếng từ điện thoại sang máy tính (dựng sẵn cho M4).
+ * hình và tiếng từ điện thoại sang máy tính (webcam và micro).
  */
 public final class PeerSession implements PeerConnectionObserver {
 
@@ -51,7 +52,11 @@ public final class PeerSession implements PeerConnectionObserver {
 
         void onChannelState(String text);
 
+        /** Mọi tin nhận qua kênh điều khiển (kể cả nhịp tim). */
         void onControlMessage(String text);
+
+        /** Điện thoại bật hoặc tắt webcam, micro. kind là "webcam" hoặc "mic". */
+        void onRemoteMedia(String kind, boolean on, String detail);
     }
 
     private static final String STREAM_ID = "pocketdock";
@@ -78,9 +83,33 @@ public final class PeerSession implements PeerConnectionObserver {
     private volatile TestPatternVideo pattern;
     private volatile BeepAudio beep;
 
+    // Hình và tiếng nhận từ điện thoại
+    private volatile VideoTrackSink remoteVideoSink;
+    private volatile VideoTrack remoteVideo;
+    private volatile AudioTrack remoteAudio;
+    private volatile double remoteVolume = 1.0;
+
     public PeerSession(JsonArray iceServers, Listener listener) {
         this.iceServers = iceServers;
         this.listener = listener;
+    }
+
+    /** Nơi nhận các khung hình webcam từ điện thoại. Gọi trước start(). */
+    public void setRemoteVideoSink(VideoTrackSink sink) {
+        this.remoteVideoSink = sink;
+    }
+
+    /** Âm lượng phát tiếng micro điện thoại ra loa máy tính: 0 là tắt tiếng, 1 là nguyên bản. */
+    public void setRemoteAudioVolume(double volume) {
+        remoteVolume = volume;
+        AudioTrack track = remoteAudio;
+        if (track != null) {
+            try {
+                track.setVolume(volume);
+            } catch (RuntimeException e) {
+                // bỏ qua
+            }
+        }
     }
 
     // ---------- khởi tạo ----------
@@ -103,8 +132,7 @@ public final class PeerSession implements PeerConnectionObserver {
         addLane(videoTrack, RTCRtpTransceiverDirection.SEND_ONLY, true);
         addLane(audioTrack, RTCRtpTransceiverDirection.SEND_ONLY, true);
 
-        // Làn 3 và 4: điện thoại → máy tính. Chưa dùng ở M3, dựng sẵn để M4 khỏi thương lượng lại.
-        // Nếu bước này lỗi thì bỏ qua, hai làn đầu vẫn chạy.
+        // Làn 3 và 4: điện thoại → máy tính (webcam, micro). Nếu bước này lỗi thì bỏ qua.
         try {
             rxVideoTrack = factory.createVideoTrack("webcam-in", rxVideoSource);
             rxAudioTrack = factory.createAudioTrack("mic-in", rxAudioSource);
@@ -267,6 +295,31 @@ public final class PeerSession implements PeerConnectionObserver {
         }
     }
 
+    /** Được gọi khi điện thoại đồng ý gửi hình hoặc tiếng về làn nhận. */
+    @Override
+    public void onTrack(RTCRtpTransceiver transceiver) {
+        MediaStreamTrack track = transceiver.getReceiver().getTrack();
+        synchronized (lock) {
+            if (closed) return;
+            if (track instanceof VideoTrack) {
+                VideoTrack video = (VideoTrack) track;
+                remoteVideo = video;
+                VideoTrackSink sink = remoteVideoSink;
+                if (sink != null) video.addSink(sink);
+                EventLog.add("May tinh: lan nhan hinh tu dien thoai san sang");
+            } else if (track instanceof AudioTrack) {
+                AudioTrack audio = (AudioTrack) track;
+                remoteAudio = audio;
+                try {
+                    audio.setVolume(remoteVolume);
+                } catch (RuntimeException e) {
+                    // bỏ qua
+                }
+                EventLog.add("May tinh: lan nhan tieng tu dien thoai san sang");
+            }
+        }
+    }
+
     private static String describe(RTCPeerConnectionState state) {
         return switch (state) {
             case NEW -> "mới";
@@ -326,19 +379,33 @@ public final class PeerSession implements PeerConnectionObserver {
     };
 
     private void handleControl(String text) {
-        listener.onControlMessage(text.length() > 80 ? text.substring(0, 80) : text);
+        listener.onControlMessage(text.length() > 120 ? text.substring(0, 120) : text);
         try {
             JsonObject obj = JsonParser.parseString(text).getAsJsonObject();
             String type = obj.has("t") ? obj.get("t").getAsString() : "";
-            if ("ping".equals(type)) {
-                JsonObject pong = new JsonObject();
-                pong.addProperty("t", "pong");
-                if (obj.has("id")) pong.add("id", obj.get("id"));
-                if (obj.has("ts")) pong.add("ts", obj.get("ts"));
-                sendControl(pong);
+            switch (type) {
+                case "ping" -> {
+                    JsonObject pong = new JsonObject();
+                    pong.addProperty("t", "pong");
+                    if (obj.has("id")) pong.add("id", obj.get("id"));
+                    if (obj.has("ts")) pong.add("ts", obj.get("ts"));
+                    sendControl(pong);
+                }
+                case "webcam", "mic" -> {
+                    boolean on = obj.has("on") && obj.get("on").getAsBoolean();
+                    StringBuilder detail = new StringBuilder();
+                    if (obj.has("w") && obj.has("h")) {
+                        detail.append(obj.get("w").getAsInt()).append("x").append(obj.get("h").getAsInt());
+                    }
+                    if (obj.has("fps")) detail.append(" @").append(obj.get("fps").getAsInt());
+                    if (obj.has("facing")) detail.append(", camera ").append(obj.get("facing").getAsString());
+                    if (obj.has("reason")) detail.append(", lý do: ").append(obj.get("reason").getAsString());
+                    listener.onRemoteMedia(type, on, detail.toString().trim());
+                }
+                default -> { }
             }
         } catch (RuntimeException e) {
-            // tin không phải JSON, bỏ qua
+            // tin không đúng định dạng, bỏ qua
         }
     }
 
@@ -361,6 +428,11 @@ public final class PeerSession implements PeerConnectionObserver {
             closed = true;
         }
         stopMedia();
+        quietly(() -> {
+            VideoTrack video = remoteVideo;
+            VideoTrackSink sink = remoteVideoSink;
+            if (video != null && sink != null) video.removeSink(sink);
+        });
         quietly(() -> {
             RTCDataChannel channel = control;
             if (channel != null) {

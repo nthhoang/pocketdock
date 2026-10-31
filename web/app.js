@@ -15,7 +15,7 @@
   function log(text) {
     const box = $('log');
     const time = new Date().toLocaleTimeString('vi-VN');
-    box.textContent = (time + '  ' + text + '\n' + box.textContent).split('\n').slice(0, 8).join('\n');
+    box.textContent = (time + '  ' + text + '\n' + box.textContent).split('\n').slice(0, 10).join('\n');
   }
 
   function deviceLabel() {
@@ -48,6 +48,12 @@
     host: 'trực tiếp trong mạng', srflx: 'qua STUN', prflx: 'trực tiếp (phát hiện lúc nối)', relay: 'qua TURN',
   };
 
+  const QUALITY = {
+    480: { w: 854, h: 480 },
+    720: { w: 1280, h: 720 },
+    1080: { w: 1920, h: 1080 },
+  };
+
   // Link có dạng https://tenmien/#maPhong.token. Phần sau dấu # không bị gửi lên máy chủ web.
   const hash = location.hash.slice(1);
   const dot = hash.indexOf('.');
@@ -61,19 +67,61 @@
     return;
   }
 
-  // ---------- WebRTC ----------
+  // ---------- trạng thái ----------
 
   let pc = null;
   let control = null;
   let remoteSet = false;
   let pendingIce = [];
   let statsTimer = null;
+  let heartbeatTimer = null;
   let pingSeq = 0;
+  let hbSeq = 0;
   const remoteStream = new MediaStream();
+
+  // Hai làn điện thoại → máy tính, lấy từ offer của máy tính
+  const lanes = { video: null, audio: null };
+  let camTrack = null;
+  let micTrack = null;
+  let camWanted = false;
+  let micWanted = false;
+  let facing = 'user';
+
+  let wakeLock = null;
+  let wakeWanted = true;
+  let hiddenAt = null;
 
   function sendSignal(obj) {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   }
+
+  function sendControl(obj) {
+    if (control && control.readyState === 'open') {
+      try {
+        control.send(JSON.stringify(obj));
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function isConnected() {
+    return pc && pc.connectionState === 'connected';
+  }
+
+  function refresh() {
+    const connected = isConnected();
+    $('cam').disabled = !(connected && lanes.video);
+    $('mic').disabled = !(connected && lanes.audio);
+    $('flip').disabled = !camTrack;
+    $('cam').textContent = camTrack ? 'Tắt webcam' : 'Bật webcam';
+    $('mic').textContent = micTrack ? 'Tắt micro' : 'Bật micro';
+    $('wake').textContent = 'Giữ màn hình sáng: ' + (wakeWanted ? 'bật' : 'tắt');
+  }
+
+  // ---------- WebRTC ----------
 
   function startPeer(iceServers) {
     pc = new RTCPeerConnection({ iceServers });
@@ -99,11 +147,15 @@
     pc.ondatachannel = (e) => setupChannel(e.channel);
 
     pc.onconnectionstatechange = () => {
-      setLine('peer', 'Kết nối trực tiếp: ' + (STATE_VI[pc.connectionState] || pc.connectionState));
-      if (pc.connectionState === 'failed') {
+      const s = pc.connectionState;
+      setLine('peer', 'Kết nối trực tiếp: ' + (STATE_VI[s] || s));
+      log('Kết nối trực tiếp: ' + (STATE_VI[s] || s));
+      sendControl({ t: 'ev', ev: 'pc', state: s });
+      if (s === 'failed') {
         show('error', 'Không nối trực tiếp được',
           'Hãy kiểm tra điện thoại và máy tính đã dùng cùng một mạng Wi-Fi chưa.');
       }
+      refresh();
     };
 
     statsTimer = setInterval(pollStats, 1000);
@@ -114,8 +166,13 @@
     channel.onopen = () => {
       setLine('channel', 'Kênh điều khiển: đã mở');
       channel.send(JSON.stringify({ t: 'hello', from: 'phone', device: deviceLabel() }));
+      // Nhịp tim 2 giây một lần: máy tính dùng để biết điện thoại còn sống hay không
+      heartbeatTimer = setInterval(() => sendControl({ t: 'hb', n: ++hbSeq }), 2000);
     };
-    channel.onclose = () => setLine('channel', 'Kênh điều khiển: đã đóng');
+    channel.onclose = () => {
+      setLine('channel', 'Kênh điều khiển: đã đóng');
+      if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    };
     channel.onmessage = (e) => {
       let m;
       try { m = JSON.parse(e.data); } catch (err) { return; }
@@ -131,16 +188,22 @@
   async function onOffer(m) {
     await pc.setRemoteDescription({ type: 'offer', sdp: m.sdp });
 
-    // Làn nào máy tính chỉ nhận (a=recvonly) thì điện thoại sẽ là bên gửi (dùng ở M4)
+    // Làn nào máy tính chỉ nhận (a=recvonly) thì điện thoại sẽ là bên gửi
     const sections = m.sdp.split(/\r?\nm=/).slice(1);
     for (const section of sections) {
       const mid = (section.match(/\na=mid:(\S+)/) || [])[1];
       if (mid === undefined) continue;
       if (/\na=recvonly/.test(section)) {
         const transceiver = pc.getTransceivers().find((t) => t.mid === mid);
-        if (transceiver) transceiver.direction = 'sendonly';
+        if (transceiver) {
+          transceiver.direction = 'sendonly';
+          const kind = transceiver.receiver.track.kind;
+          if (kind === 'video') lanes.video = transceiver;
+          else if (kind === 'audio') lanes.audio = transceiver;
+        }
       }
     }
+    log('Làn gửi: ' + (lanes.video ? 'hình ' : '') + (lanes.audio ? 'tiếng' : ''));
 
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
@@ -149,6 +212,7 @@
     remoteSet = true;
     for (const c of pendingIce) await addRemoteIce(c);
     pendingIce = [];
+    refresh();
   }
 
   async function addRemoteIce(m) {
@@ -176,10 +240,10 @@
 
     if (video) {
       const size = (video.frameWidth || '?') + 'x' + (video.frameHeight || '?');
-      setLine('video', 'Hình ảnh: ' + size + ', ' + Math.round(video.framesPerSecond || 0) + ' khung hình/giây');
+      setLine('video', 'Hình ảnh nhận: ' + size + ', ' + Math.round(video.framesPerSecond || 0) + ' khung hình/giây');
     }
     if (audio) {
-      setLine('audio', 'Âm thanh: ' + (audio.packetsReceived > 0
+      setLine('audio', 'Âm thanh nhận: ' + (audio.packetsReceived > 0
         ? 'đang nhận (' + audio.packetsReceived + ' gói)' : 'chưa có gói nào'));
     }
     if (pair) {
@@ -191,10 +255,162 @@
     }
   }
 
-  function closePeer() {
-    if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
-    if (pc) { pc.close(); pc = null; }
+  // ---------- webcam ----------
+
+  async function startCamera() {
+    const q = QUALITY[$('quality').value];
+    // iPhone chỉ mở được một camera một lúc, nên tắt cái cũ trước
+    if (camTrack) { camTrack.onended = null; camTrack.stop(); camTrack = null; }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: facing },
+        width: { ideal: q.w },
+        height: { ideal: q.h },
+        frameRate: { ideal: 30 },
+      },
+      audio: false,
+    });
+    const track = stream.getVideoTracks()[0];
+    track.onended = () => {
+      log('Hệ thống đã dừng camera');
+      camTrack = null;
+      setLine('cam', 'Webcam: bị hệ thống dừng');
+      sendControl({ t: 'webcam', on: false, reason: 'ended' });
+      refresh();
+    };
+    await lanes.video.sender.replaceTrack(track);
+    camTrack = track;
+    camWanted = true;
+    $('preview').srcObject = new MediaStream([track]);
+
+    const s = track.getSettings();
+    const size = (s.width || '?') + 'x' + (s.height || '?');
+    setLine('cam', 'Webcam: đang bật ' + size + ' @' + Math.round(s.frameRate || 0));
+    sendControl({
+      t: 'webcam', on: true, w: s.width, h: s.height,
+      fps: Math.round(s.frameRate || 0), facing,
+    });
+    if (wakeWanted) requestWakeLock();
+    refresh();
   }
+
+  async function stopCamera() {
+    camWanted = false;
+    if (lanes.video) await lanes.video.sender.replaceTrack(null);
+    if (camTrack) { camTrack.onended = null; camTrack.stop(); camTrack = null; }
+    $('preview').srcObject = null;
+    setLine('cam', 'Webcam: tắt');
+    sendControl({ t: 'webcam', on: false });
+    refresh();
+  }
+
+  // ---------- micro ----------
+
+  async function startMic() {
+    if (micTrack) { micTrack.onended = null; micTrack.stop(); micTrack = null; }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    });
+    const track = stream.getAudioTracks()[0];
+    track.onended = () => {
+      log('Hệ thống đã dừng micro');
+      micTrack = null;
+      setLine('mic', 'Micro: bị hệ thống dừng');
+      sendControl({ t: 'mic', on: false, reason: 'ended' });
+      refresh();
+    };
+    await lanes.audio.sender.replaceTrack(track);
+    micTrack = track;
+    micWanted = true;
+    setLine('mic', 'Micro: đang bật');
+    sendControl({ t: 'mic', on: true });
+    if (wakeWanted) requestWakeLock();
+    refresh();
+  }
+
+  async function stopMic() {
+    micWanted = false;
+    if (lanes.audio) await lanes.audio.sender.replaceTrack(null);
+    if (micTrack) { micTrack.onended = null; micTrack.stop(); micTrack = null; }
+    setLine('mic', 'Micro: tắt');
+    sendControl({ t: 'mic', on: false });
+    refresh();
+  }
+
+  // ---------- giữ màn hình sáng ----------
+
+  async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) {
+      setLine('wake', 'Giữ màn hình sáng: trình duyệt không hỗ trợ');
+      return;
+    }
+    if (wakeLock) return;
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => {
+        wakeLock = null;
+        setLine('wake', 'Giữ màn hình sáng: đã bị hệ thống nhả');
+        log('Wake Lock bị nhả');
+        sendControl({ t: 'ev', ev: 'wake_released' });
+      });
+      setLine('wake', 'Giữ màn hình sáng: đang bật');
+      sendControl({ t: 'ev', ev: 'wake_on' });
+    } catch (e) {
+      wakeLock = null;
+      setLine('wake', 'Giữ màn hình sáng: lỗi ' + e.name);
+    }
+  }
+
+  async function releaseWakeLock() {
+    if (wakeLock) {
+      try { await wakeLock.release(); } catch (e) { /* bỏ qua */ }
+      wakeLock = null;
+    }
+    setLine('wake', 'Giữ màn hình sáng: tắt');
+  }
+
+  // ---------- khi trang bị ẩn (khóa màn hình, chuyển app) ----------
+
+  async function resumeCapture() {
+    try {
+      if (camWanted && (!camTrack || camTrack.readyState === 'ended')) await startCamera();
+      if (micWanted && (!micTrack || micTrack.readyState === 'ended')) await startMic();
+    } catch (e) {
+      log('Không tự bật lại được: ' + e.name + ' (hãy bấm nút để bật lại)');
+      sendControl({ t: 'ev', ev: 'resume_failed', name: e.name });
+    }
+  }
+
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'hidden') {
+      hiddenAt = Date.now();
+      // Gửi được hay không còn tùy trình duyệt kịp tạm dừng chưa
+      sendControl({ t: 'ev', ev: 'hidden' });
+    } else {
+      const away = hiddenAt ? Math.round((Date.now() - hiddenAt) / 1000) : 0;
+      hiddenAt = null;
+      log('Quay lại sau ' + away + ' giây');
+      setLine('peer', 'Kết nối trực tiếp: ' + (pc ? (STATE_VI[pc.connectionState] || pc.connectionState) : 'không có'));
+      sendControl({
+        t: 'ev', ev: 'visible', away,
+        pc: pc ? pc.connectionState : 'none',
+        ice: pc ? pc.iceConnectionState : 'none',
+        channel: control ? control.readyState : 'none',
+        cam: camTrack ? camTrack.readyState : 'off',
+        mic: micTrack ? micTrack.readyState : 'off',
+        wake: wakeLock ? 'on' : 'off',
+      });
+      if (wakeWanted) await requestWakeLock();
+      await resumeCapture();
+      refresh();
+    }
+  });
+
+  window.addEventListener('pagehide', () => sendControl({ t: 'ev', ev: 'pagehide' }));
+
+  // ---------- nút bấm ----------
 
   $('unmute').addEventListener('click', () => {
     const v = $('screen');
@@ -211,7 +427,58 @@
     control.send(JSON.stringify({ t: 'ping', id: ++pingSeq, ts: performance.now() }));
   });
 
-  // ---------- Kết nối máy chủ ----------
+  $('cam').addEventListener('click', async () => {
+    try {
+      if (camTrack) await stopCamera();
+      else await startCamera();
+    } catch (e) {
+      camWanted = false;
+      log('Webcam lỗi: ' + e.name + ' ' + e.message);
+      setLine('cam', 'Webcam: lỗi ' + e.name);
+    }
+    refresh();
+  });
+
+  $('flip').addEventListener('click', async () => {
+    facing = facing === 'user' ? 'environment' : 'user';
+    try { await startCamera(); } catch (e) { log('Đổi camera lỗi: ' + e.name); }
+  });
+
+  $('quality').addEventListener('change', async () => {
+    if (!camTrack) return;
+    try { await startCamera(); } catch (e) { log('Đổi chất lượng lỗi: ' + e.name); }
+  });
+
+  $('mic').addEventListener('click', async () => {
+    try {
+      if (micTrack) await stopMic();
+      else await startMic();
+    } catch (e) {
+      micWanted = false;
+      log('Micro lỗi: ' + e.name + ' ' + e.message);
+      setLine('mic', 'Micro: lỗi ' + e.name);
+    }
+    refresh();
+  });
+
+  $('wake').addEventListener('click', async () => {
+    wakeWanted = !wakeWanted;
+    if (wakeWanted) await requestWakeLock();
+    else await releaseWakeLock();
+    refresh();
+  });
+
+  function closePeer() {
+    if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    if (camTrack) { camTrack.onended = null; camTrack.stop(); camTrack = null; }
+    if (micTrack) { micTrack.onended = null; micTrack.stop(); micTrack = null; }
+    releaseWakeLock();
+    if (pc) { pc.close(); pc = null; }
+    refresh();
+  }
+
+  // ---------- kết nối máy chủ ----------
 
   show('connecting', 'Đang kết nối...', '');
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';

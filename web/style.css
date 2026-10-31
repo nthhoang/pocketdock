@@ -23,6 +23,7 @@ body {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
 }
 h1 { margin: 0 0 4px; font-size: 22px; }
+h2 { margin: 22px 0 8px; font-size: 14px; text-align: left; color: var(--muted); font-weight: 600; }
 .sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
 .dot { width: 14px; height: 14px; border-radius: 50%; margin: 0 auto 14px; background: var(--info); }
 body[data-state="waiting"] .dot { background: var(--warn); }
@@ -31,13 +32,17 @@ body[data-state="error"] .dot { background: var(--err); }
 #status { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
 #detail { color: var(--muted); margin: 0; line-height: 1.5; }
 #media { margin-top: 20px; }
-video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; }
-.row { display: flex; gap: 10px; margin: 12px 0; }
+video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; display: block; }
+video.small { max-width: 280px; margin: 0 auto; }
+.row { display: flex; gap: 10px; margin: 10px 0; }
+.field { display: block; text-align: left; font-size: 14px; margin: 12px 0 4px; }
+select { font-size: 16px; padding: 6px 8px; margin-left: 8px; }
 button {
   flex: 1; font-size: 16px; padding: 12px; border: 0; border-radius: 10px;
   background: var(--btn); color: var(--btn-text);
 }
-.info { list-style: none; padding: 0; margin: 12px 0; text-align: left; font-size: 14px; line-height: 1.7; }
+button:disabled { opacity: 0.4; }
+.info { list-style: none; padding: 0; margin: 14px 0; text-align: left; font-size: 14px; line-height: 1.7; }
 #log {
   text-align: left; font-size: 12px; background: var(--code-bg); color: var(--muted);
   padding: 10px; border-radius: 8px; min-height: 40px; white-space: pre-wrap; margin: 0;

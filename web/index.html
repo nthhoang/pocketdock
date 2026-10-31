@@ -16,18 +16,41 @@
   <p id="detail"></p>
 
   <section id="media" hidden>
+    <h2>Từ máy tính sang điện thoại</h2>
     <video id="screen" playsinline autoplay muted></video>
     <div class="row">
       <button id="unmute" type="button">Bật tiếng</button>
       <button id="ping" type="button">Gửi ping</button>
     </div>
+
+    <h2>Từ điện thoại sang máy tính</h2>
+    <video id="preview" class="small" playsinline autoplay muted></video>
+    <label class="field">Chất lượng webcam
+      <select id="quality">
+        <option value="480">480p</option>
+        <option value="720" selected>720p</option>
+        <option value="1080">1080p</option>
+      </select>
+    </label>
+    <div class="row">
+      <button id="cam" type="button" disabled>Bật webcam</button>
+      <button id="flip" type="button" disabled>Đổi camera</button>
+    </div>
+    <div class="row">
+      <button id="mic" type="button" disabled>Bật micro</button>
+      <button id="wake" type="button">Giữ màn hình sáng: bật</button>
+    </div>
+
     <ul class="info">
       <li id="line-peer">Kết nối trực tiếp: đang khởi tạo</li>
       <li id="line-channel">Kênh điều khiển: chưa mở</li>
       <li id="line-route">Đường truyền: chưa rõ</li>
-      <li id="line-video">Hình ảnh: chưa nhận</li>
-      <li id="line-audio">Âm thanh: chưa nhận</li>
+      <li id="line-video">Hình ảnh nhận: chưa nhận</li>
+      <li id="line-audio">Âm thanh nhận: chưa nhận</li>
       <li id="line-rtt">Độ trễ ping: chưa đo</li>
+      <li id="line-cam">Webcam: tắt</li>
+      <li id="line-mic">Micro: tắt</li>
+      <li id="line-wake">Giữ màn hình sáng: chưa bật</li>
     </ul>
     <pre id="log"></pre>
   </section>

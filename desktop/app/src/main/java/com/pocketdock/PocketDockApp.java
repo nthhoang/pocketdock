@@ -14,9 +14,14 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import javafx.util.Duration;
@@ -41,6 +46,8 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
     private final Label statusLabel = new Label();
     private final Label peerLabel = new Label();
     private final Label channelLabel = new Label();
+    private final Label mediaLabel = new Label();
+    private final Label signalLabel = new Label();
     private final Label messagesLabel = new Label();
     private final Label linkHint = new Label("Không quét được? Sao chép địa chỉ này:");
     private final TextField linkField = new TextField();
@@ -63,6 +70,23 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         return t;
     });
 
+    // Cửa sổ xem webcam từ điện thoại
+    private Stage previewStage;
+    private final RemoteVideoView videoView = new RemoteVideoView();
+    private final Label previewInfo = new Label();
+    private final CheckBox flipBox = new CheckBox("Lật ngang");
+    private final ToggleButton muteButton = new ToggleButton("Tắt tiếng micro điện thoại");
+    private long lastFrames;
+    private String webcamState = "Webcam điện thoại: tắt";
+    private String micState = "Micro điện thoại: tắt";
+
+    // Theo dõi tín hiệu từ điện thoại (nhịp tim 2 giây một lần)
+    private Timeline ticker;
+    private long lastSignalNs;
+    private boolean inGap;
+    private int gapCount;
+    private double longestGapSec;
+
     @Override
     public void start(Stage primaryStage) {
         this.stage = primaryStage;
@@ -71,13 +95,13 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         title.setStyle("-fx-font-size: 26px; -fx-font-weight: bold;");
 
         statusLabel.setWrapText(true);
-        statusLabel.setMaxWidth(360);
+        statusLabel.setMaxWidth(380);
         statusLabel.setStyle("-fx-font-size: 15px;");
         countdownLabel.setStyle("-fx-text-fill: #666666;");
         linkHint.setStyle("-fx-text-fill: #666666; -fx-font-size: 12px;");
-        for (Label label : new Label[]{peerLabel, channelLabel, messagesLabel}) {
+        for (Label label : new Label[]{peerLabel, channelLabel, mediaLabel, signalLabel, messagesLabel}) {
             label.setWrapText(true);
-            label.setMaxWidth(360);
+            label.setMaxWidth(380);
             label.setStyle("-fx-font-size: 13px;");
         }
 
@@ -86,26 +110,31 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         qrView.setSmooth(false);
 
         linkField.setEditable(false);
-        linkField.setMaxWidth(360);
+        linkField.setMaxWidth(380);
 
         retryButton.setOnAction(e -> connect());
         disconnectButton.setOnAction(e -> disconnectDevice());
 
         VBox root = new VBox(10, title, qrView, countdownLabel, statusLabel,
-                peerLabel, channelLabel, messagesLabel,
+                peerLabel, channelLabel, mediaLabel, signalLabel, messagesLabel,
                 linkHint, linkField, retryButton, disconnectButton);
         root.setAlignment(Pos.CENTER);
         root.setPadding(new Insets(24));
 
         stage.setTitle("PocketDock");
-        stage.setScene(new Scene(root, 440, 720));
+        stage.setScene(new Scene(root, 460, 780));
         stage.show();
+
+        ticker = new Timeline(new KeyFrame(Duration.seconds(1), e -> tick()));
+        ticker.setCycleCount(Timeline.INDEFINITE);
+        ticker.play();
 
         connect();
     }
 
     @Override
     public void stop() {
+        if (ticker != null) ticker.stop();
         closePeer();
         if (client != null) client.close();
         worker.execute(RtcRuntime::shutdown);
@@ -192,6 +221,7 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
             }
             case "device_left" -> {
                 deviceGone = true;
+                EventLog.add("May chu bao: dien thoai da roi di");
                 closePeer();
                 if (pendingDialog != null) pendingDialog.close();
                 setStatus("Thiết bị đã rời đi, đang tạo mã mới...");
@@ -235,6 +265,7 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
             showOnly(false, false, true);
             countdownLabel.setText("");
             setStatus("Đã kết nối với: " + device);
+            EventLog.add("---- Phien moi: da cho phep thiet bi " + device + " ----");
             startPeer();
         } else {
             client.send("reject");
@@ -265,8 +296,17 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         closePeer();
         peerLabel.setText("Kết nối trực tiếp: đang khởi tạo...");
         channelLabel.setText("Kênh điều khiển: chưa mở");
+        webcamState = "Webcam điện thoại: tắt";
+        micState = "Micro điện thoại: tắt";
+        mediaLabel.setText(webcamState + "\n" + micState);
+        signalLabel.setText("Tín hiệu điện thoại: chờ tin đầu tiên");
         messagesLabel.setText("");
         recentMessages.clear();
+        lastSignalNs = 0;
+        inGap = false;
+        gapCount = 0;
+        longestGapSec = 0;
+        muteButton.setSelected(false);
 
         PeerSession session = new PeerSession(iceServers, new PeerSession.Listener() {
             @Override
@@ -277,19 +317,27 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
 
             @Override
             public void onPeerState(String text) {
+                EventLog.add("May tinh: " + text);
                 Platform.runLater(() -> peerLabel.setText(text));
             }
 
             @Override
             public void onChannelState(String text) {
+                EventLog.add("May tinh: " + text);
                 Platform.runLater(() -> channelLabel.setText(text));
             }
 
             @Override
             public void onControlMessage(String text) {
-                Platform.runLater(() -> addControlMessage(text));
+                Platform.runLater(() -> handleControlText(text));
+            }
+
+            @Override
+            public void onRemoteMedia(String kind, boolean on, String detail) {
+                Platform.runLater(() -> handleRemoteMedia(kind, on, detail));
             }
         });
+        session.setRemoteVideoSink(videoView);
         peer = session;
 
         worker.execute(() -> {
@@ -301,16 +349,121 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         });
     }
 
+    /** Gọi trên luồng giao diện. */
     private void closePeer() {
         PeerSession p = peer;
         peer = null;
         if (p != null) worker.execute(p::close);
+        resetMediaUi();
     }
 
-    private void addControlMessage(String text) {
+    private void resetMediaUi() {
+        if (previewStage != null) previewStage.hide();
+        videoView.clear();
+        lastFrames = videoView.framesTotal();
+        lastSignalNs = 0;
+        webcamState = "Webcam điện thoại: tắt";
+        micState = "Micro điện thoại: tắt";
+        mediaLabel.setText("");
+        signalLabel.setText("");
+    }
+
+    private void handleControlText(String text) {
+        lastSignalNs = System.nanoTime();
+        if (text.contains("\"hb\"")) return; // nhịp tim chỉ dùng để theo dõi, không hiện ra
+        EventLog.add("Dien thoai: " + text);
         recentMessages.addLast(text);
         while (recentMessages.size() > 4) recentMessages.removeFirst();
         messagesLabel.setText("Tin nhắn từ điện thoại:\n" + String.join("\n", recentMessages));
+    }
+
+    private void handleRemoteMedia(String kind, boolean on, String detail) {
+        String suffix = detail.isEmpty() ? "" : " (" + detail + ")";
+        if ("webcam".equals(kind)) {
+            webcamState = "Webcam điện thoại: " + (on ? "đang bật" : "tắt") + suffix;
+            if (on) {
+                ensurePreview();
+                previewStage.show();
+                previewStage.toFront();
+            } else if (previewStage != null) {
+                previewStage.hide();
+            }
+        } else if ("mic".equals(kind)) {
+            micState = "Micro điện thoại: " + (on ? "đang bật" : "tắt") + suffix;
+        }
+        mediaLabel.setText(webcamState + "\n" + micState);
+        EventLog.add("Dien thoai: " + kind + (on ? " BAT " : " TAT ") + detail);
+    }
+
+    // ---------- cửa sổ webcam ----------
+
+    private void ensurePreview() {
+        if (previewStage != null) return;
+
+        ImageView view = videoView.getNode();
+        view.setPreserveRatio(true);
+        StackPane center = new StackPane(view);
+        center.setStyle("-fx-background-color: black;");
+        center.setMinSize(0, 0);
+        view.fitWidthProperty().bind(center.widthProperty());
+        view.fitHeightProperty().bind(center.heightProperty());
+
+        flipBox.selectedProperty().addListener((o, was, now) -> view.setScaleX(now ? -1 : 1));
+        muteButton.selectedProperty().addListener((o, was, now) -> {
+            muteButton.setText(now ? "Bật lại tiếng micro điện thoại" : "Tắt tiếng micro điện thoại");
+            setPhoneMicMuted(now);
+        });
+        Label warning = new Label("Dùng tai nghe để tránh bị hú");
+        warning.setStyle("-fx-text-fill: #888888;");
+
+        HBox bar = new HBox(14, previewInfo, flipBox, muteButton, warning);
+        bar.setAlignment(Pos.CENTER_LEFT);
+        bar.setPadding(new Insets(8));
+
+        BorderPane pane = new BorderPane(center);
+        pane.setBottom(bar);
+
+        previewStage = new Stage();
+        previewStage.setTitle("Webcam từ điện thoại");
+        previewStage.setScene(new Scene(pane, 840, 540));
+    }
+
+    private void setPhoneMicMuted(boolean muted) {
+        PeerSession p = peer;
+        if (p != null) worker.execute(() -> p.setRemoteAudioVolume(muted ? 0.0 : 1.0));
+    }
+
+    // ---------- bộ đếm 1 giây: thống kê hình và theo dõi nhịp tim ----------
+
+    private void tick() {
+        if (previewStage != null && previewStage.isShowing()) {
+            long total = videoView.framesTotal();
+            long fps = total - lastFrames;
+            lastFrames = total;
+            previewInfo.setText(videoView.width() + "x" + videoView.height() + ", " + fps + " khung hình/giây");
+        }
+
+        if (peer == null || lastSignalNs == 0) return;
+        double gap = (System.nanoTime() - lastSignalNs) / 1e9;
+        if (gap > 6) {
+            if (!inGap) {
+                inGap = true;
+                EventLog.add("MAT TIN HIEU tu dien thoai (qua 6 giay khong co tin)");
+            }
+            signalLabel.setText("Tín hiệu điện thoại: im lặng " + (int) gap + " giây" + gapSummary());
+        } else {
+            if (inGap) {
+                inGap = false;
+                gapCount++;
+                longestGapSec = Math.max(longestGapSec, gap + 6);
+                EventLog.add("Tin hieu dien thoai tro lai (im lang khoang " + Math.round(gap + 6) + " giay)");
+            }
+            signalLabel.setText("Tín hiệu điện thoại: bình thường" + gapSummary());
+        }
+    }
+
+    private String gapSummary() {
+        return gapCount == 0 ? "" : " (đã mất " + gapCount + " lần, lâu nhất khoảng " + Math.round(longestGapSec) + " giây)";
     }
 
     // ---------- đồng hồ đếm ngược ----------
@@ -348,6 +501,8 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         setShown(disconnectButton, connected);
         setShown(peerLabel, connected);
         setShown(channelLabel, connected);
+        setShown(mediaLabel, connected);
+        setShown(signalLabel, connected);
         setShown(messagesLabel, connected);
         setShown(retryButton, false);
     }
