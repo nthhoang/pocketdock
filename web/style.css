@@ -32,6 +32,7 @@ body[data-state="error"] .dot { background: var(--err); }
 #status { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
 #detail { color: var(--muted); margin: 0; line-height: 1.5; }
 #media { margin-top: 20px; }
+#screen { touch-action: none; }
 video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; display: block; }
 video.small { max-width: 280px; margin: 0 auto; }
 .row { display: flex; gap: 10px; margin: 10px 0; }

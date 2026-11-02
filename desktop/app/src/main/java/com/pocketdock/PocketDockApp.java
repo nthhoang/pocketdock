@@ -2,11 +2,13 @@ package com.pocketdock;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
+import javafx.geometry.Rectangle2D;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
@@ -23,6 +25,7 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 
@@ -49,6 +52,8 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
     private final Label mediaLabel = new Label();
     private final Label signalLabel = new Label();
     private final Label messagesLabel = new Label();
+    private final Label touchLabel = new Label();
+    private long touchCount;
     private final Label linkHint = new Label("Không quét được? Sao chép địa chỉ này:");
     private final TextField linkField = new TextField();
     private final Button retryButton = new Button("Kết nối lại");
@@ -99,7 +104,7 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         statusLabel.setStyle("-fx-font-size: 15px;");
         countdownLabel.setStyle("-fx-text-fill: #666666;");
         linkHint.setStyle("-fx-text-fill: #666666; -fx-font-size: 12px;");
-        for (Label label : new Label[]{peerLabel, channelLabel, mediaLabel, signalLabel, messagesLabel}) {
+        for (Label label : new Label[]{peerLabel, channelLabel, mediaLabel, signalLabel, messagesLabel, touchLabel}) {
             label.setWrapText(true);
             label.setMaxWidth(380);
             label.setStyle("-fx-font-size: 13px;");
@@ -116,7 +121,7 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         disconnectButton.setOnAction(e -> disconnectDevice());
 
         VBox root = new VBox(10, title, qrView, countdownLabel, statusLabel,
-                peerLabel, channelLabel, mediaLabel, signalLabel, messagesLabel,
+                peerLabel, channelLabel, mediaLabel, signalLabel, messagesLabel, touchLabel,
                 linkHint, linkField, retryButton, disconnectButton);
         root.setAlignment(Pos.CENTER);
         root.setPadding(new Insets(24));
@@ -301,6 +306,8 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         mediaLabel.setText(webcamState + "\n" + micState);
         signalLabel.setText("Tín hiệu điện thoại: chờ tin đầu tiên");
         messagesLabel.setText("");
+        touchLabel.setText("Chạm từ điện thoại: chưa có");
+        touchCount = 0;
         recentMessages.clear();
         lastSignalNs = 0;
         inGap = false;
@@ -371,10 +378,38 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
     private void handleControlText(String text) {
         lastSignalNs = System.nanoTime();
         if (text.contains("\"hb\"")) return; // nhịp tim chỉ dùng để theo dõi, không hiện ra
+        if (text.contains("\"touch\"")) {
+            handleTouch(text);
+            return;
+        }
         EventLog.add("Dien thoai: " + text);
         recentMessages.addLast(text);
         while (recentMessages.size() > 4) recentMessages.removeFirst();
         messagesLabel.setText("Tin nhắn từ điện thoại:\n" + String.join("\n", recentMessages));
+    }
+
+    /** Nhận tọa độ chạm từ điện thoại, đổi sang tọa độ màn hình và ghi log (chưa điều khiển chuột thật). */
+    private void handleTouch(String text) {
+        try {
+            JsonObject o = JsonParser.parseString(text).getAsJsonObject();
+            String action = o.get("a").getAsString();
+            double nx = o.get("x").getAsDouble();
+            double ny = o.get("y").getAsDouble();
+            Rectangle2D screen = Screen.getPrimary().getBounds();
+            TouchMapper.Bounds bounds = new TouchMapper.Bounds(
+                    (int) screen.getMinX(), (int) screen.getMinY(),
+                    (int) screen.getWidth(), (int) screen.getHeight());
+            var point = TouchMapper.map(nx, ny, bounds);
+            if (point.isEmpty()) return;
+            touchCount++;
+            String line = action + " (" + nx + ", " + ny + ") -> màn hình (" + point.get().x + ", " + point.get().y + ")";
+            touchLabel.setText("Chạm từ điện thoại: " + touchCount + " tin, mới nhất: " + line);
+            if (!"move".equals(action)) {
+                EventLog.add("Cham: " + action + " (" + nx + ", " + ny + ") -> (" + point.get().x + ", " + point.get().y + ")");
+            }
+        } catch (RuntimeException e) {
+            EventLog.add("Tin cham khong hop le: " + text);
+        }
     }
 
     private void handleRemoteMedia(String kind, boolean on, String detail) {
@@ -504,6 +539,7 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         setShown(mediaLabel, connected);
         setShown(signalLabel, connected);
         setShown(messagesLabel, connected);
+        setShown(touchLabel, connected);
         setShown(retryButton, false);
     }
 

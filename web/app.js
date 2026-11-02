@@ -111,6 +111,56 @@
     return pc && pc.connectionState === 'connected';
   }
 
+  // ---------- chạm lên hình màn hình: gửi tọa độ chuẩn hóa 0 đến 1 ----------
+
+  const screenEl = $('screen');
+  const activePointers = new Map();
+  let lastMoveAt = 0;
+
+  // Vùng hình thật sự được vẽ trong khung video (video để object-fit: contain nên có thể có viền đen)
+  function contentRect() {
+    const r = screenEl.getBoundingClientRect();
+    const vw = screenEl.videoWidth;
+    const vh = screenEl.videoHeight;
+    if (!vw || !vh) return r;
+    const scale = Math.min(r.width / vw, r.height / vh);
+    const w = vw * scale;
+    const h = vh * scale;
+    return { left: r.left + (r.width - w) / 2, top: r.top + (r.height - h) / 2, width: w, height: h };
+  }
+
+  function sendTouch(action, e) {
+    const c = contentRect();
+    if (!c.width || !c.height) return;
+    const x = (e.clientX - c.left) / c.width;
+    const y = (e.clientY - c.top) / c.height;
+    if (action === 'down' && (x < 0 || x > 1 || y < 0 || y > 1)) return; // chạm vào viền đen thì bỏ qua
+    const clamp = (v) => Math.min(1, Math.max(0, v));
+    sendControl({ t: 'touch', a: action, id: e.pointerId, x: +clamp(x).toFixed(4), y: +clamp(y).toFixed(4) });
+  }
+
+  screenEl.addEventListener('pointerdown', (e) => {
+    activePointers.set(e.pointerId, true);
+    try { screenEl.setPointerCapture(e.pointerId); } catch (err) { /* bỏ qua */ }
+    sendTouch('down', e);
+    e.preventDefault();
+  });
+  screenEl.addEventListener('pointermove', (e) => {
+    if (!activePointers.has(e.pointerId)) return;
+    const now = performance.now();
+    if (now - lastMoveAt < 16) return; // tối đa khoảng 60 tin mỗi giây
+    lastMoveAt = now;
+    sendTouch('move', e);
+    e.preventDefault();
+  });
+  const endTouch = (e) => {
+    if (!activePointers.delete(e.pointerId)) return;
+    sendTouch('up', e);
+    e.preventDefault();
+  };
+  screenEl.addEventListener('pointerup', endTouch);
+  screenEl.addEventListener('pointercancel', endTouch);
+
   function refresh() {
     const connected = isConnected();
     $('cam').disabled = !(connected && lanes.video);
