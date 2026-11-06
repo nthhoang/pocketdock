@@ -92,7 +92,7 @@
   let hiddenAt = null;
 
   function sendSignal(obj) {
-    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   }
 
   function sendControl(obj) {
@@ -201,6 +201,12 @@
       setLine('peer', 'Kết nối trực tiếp: ' + (STATE_VI[s] || s));
       log('Kết nối trực tiếp: ' + (STATE_VI[s] || s));
       sendControl({ t: 'ev', ev: 'pc', state: s });
+      if (s === 'connected') {
+        if (approved && document.body.dataset.state === 'error') {
+          show('ok', 'Đã kết nối', 'Đã nối lại kết nối trực tiếp.');
+        }
+        resumeCapture(); // sau khi dựng lại kết nối thì bật lại webcam, micro đang dùng dở
+      }
       if (s === 'failed') {
         show('error', 'Không nối trực tiếp được',
           'Hãy kiểm tra điện thoại và máy tính đã dùng cùng một mạng Wi-Fi chưa.');
@@ -528,26 +534,197 @@
     refresh();
   }
 
-  // ---------- kết nối máy chủ ----------
+  // ---------- kết nối máy chủ, tự nối lại ----------
 
-  show('connecting', 'Đang kết nối...', '');
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(proto + '//' + location.host + '/ws');
+  let ws = null;
+  let approved = false;        // đã được máy tính cho phép, có mã tiếp tục
+  let resumeToken = null;
+  let resumeWindowSec = 90;
+  let iceServersCache = [];
+  let reconnecting = false;
+  let reconnectDeadline = 0;
+  let reconnectAttempt = 0;
+  let reconnectTimer = null;
 
-  ws.onopen = () => {
-    sendSignal({ type: 'join', sessionId, token, deviceInfo: deviceLabel() });
+  const RESUME_REASONS = {
+    not_found: 'Phòng đã hết hạn hoặc đã bị đóng. Hãy quét mã QR mới trên máy tính.',
+    bad_token: 'Không nối lại được. Hãy quét mã QR mới trên máy tính.',
+    expired: 'Đã quá thời gian giữ phòng. Hãy quét mã QR mới trên máy tính.',
+    too_many_attempts: 'Thử sai quá nhiều lần. Hãy đợi một phút rồi quét lại mã QR.',
   };
 
   // Xử lý lần lượt từng tin nhắn, để tin sau không chạy trước khi tin trước xong
   let chain = Promise.resolve();
 
-  ws.onmessage = (event) => {
-    let m;
-    try { m = JSON.parse(event.data); } catch (e) { return; }
-    chain = chain
-      .then(() => handle(m))
-      .catch((err) => log('Lỗi: ' + (err && err.message ? err.message : err)));
-  };
+  let attemptTimer = null;
+  let lastWsRx = 0;
+
+  function connectWs(resuming) {
+    clearTimeout(attemptTimer);
+    if (ws) {
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onclose = null;
+      try { ws.close(); } catch (e) { /* bỏ qua */ }
+    }
+    const socket = new WebSocket(proto + '//' + location.host + '/ws');
+    ws = socket;
+
+    // Khi nối lại mà trình duyệt cứ treo ở trạng thái "đang nối" (mạng vừa bật lại), bỏ và thử lại
+    if (resuming) {
+      attemptTimer = setTimeout(() => {
+        if (socket !== ws || socket.readyState === WebSocket.OPEN) return;
+        log('Nối máy chủ quá lâu, thử lại');
+        socket.onopen = null;
+        socket.onmessage = null;
+        socket.onclose = null;
+        try { socket.close(); } catch (e) { /* bỏ qua */ }
+        onSocketClosed();
+      }, 6000);
+    }
+
+    socket.onopen = () => {
+      if (socket !== ws) return;
+      clearTimeout(attemptTimer);
+      lastWsRx = Date.now();
+      if (resuming) {
+        sendSignal({ type: 'resume', role: 'phone', sessionId, resumeToken, deviceInfo: deviceLabel() });
+      } else {
+        sendSignal({ type: 'join', sessionId, token, deviceInfo: deviceLabel() });
+      }
+    };
+
+    socket.onmessage = (event) => {
+      if (socket !== ws) return;
+      lastWsRx = Date.now();
+      let m;
+      try { m = JSON.parse(event.data); } catch (e) { return; }
+      if (m.type === 'pong') return;
+      chain = chain
+        .then(() => handle(m))
+        .catch((err) => log('Lỗi: ' + (err && err.message ? err.message : err)));
+    };
+
+    socket.onclose = () => {
+      if (socket !== ws) return;
+      clearTimeout(attemptTimer);
+      onSocketClosed();
+    };
+  }
+
+  function onSocketClosed() {
+    if (reconnecting) {
+      // Lần thử nối lại vừa rồi thất bại: thử lại với khoảng chờ tăng dần
+      scheduleReconnect(Math.min(1000 * Math.pow(2, reconnectAttempt), 8000));
+      reconnectAttempt++;
+      return;
+    }
+    const state = document.body.dataset.state;
+    if (approved && resumeToken) {
+      startReconnect('Mất kết nối máy chủ');
+    } else if (state === 'connecting' || state === 'waiting' || state === 'ok') {
+      closePeer();
+      show('error', 'Mất kết nối', 'Hãy quét lại mã QR trên máy tính.');
+    }
+  }
+
+  function startReconnect(why) {
+    reconnecting = true;
+    reconnectAttempt = 0;
+    reconnectDeadline = Date.now() + resumeWindowSec * 1000;
+    log(why + ', đang thử nối lại');
+    scheduleReconnect(0);
+  }
+
+  function scheduleReconnect(delayMs) {
+    clearTimeout(reconnectTimer);
+    const left = Math.round((reconnectDeadline - Date.now()) / 1000);
+    if (left <= 0) {
+      stopReconnect();
+      approved = false;
+      resumeToken = null;
+      closePeer();
+      show('error', 'Mất kết nối', 'Đã quá thời gian giữ phòng. Hãy quét lại mã QR trên máy tính.');
+      return;
+    }
+    show('waiting', 'Mất kết nối máy chủ, đang nối lại...',
+      'Còn khoảng ' + left + ' giây để nối lại mà không cần quét lại mã QR.');
+    reconnectTimer = setTimeout(() => connectWs(true), delayMs);
+  }
+
+  function stopReconnect() {
+    reconnecting = false;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  // Trình duyệt có thể không báo đường truyền tới máy chủ đã chết (ví dụ vừa bật rồi tắt chế độ máy bay),
+  // nên điện thoại tự hỏi thăm máy chủ định kỳ và coi như mất kết nối nếu không có trả lời.
+  function onSocketDead(why) {
+    if (!approved || !resumeToken || reconnecting) return;
+    if (ws) {
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onclose = null;
+      try { ws.close(); } catch (e) { /* bỏ qua */ }
+    }
+    startReconnect(why);
+  }
+
+  function probeServer() {
+    if (!approved || !resumeToken || reconnecting) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      onSocketDead('Đường truyền tới máy chủ đã đóng');
+      return;
+    }
+    sendSignal({ type: 'ping' });
+    if (Date.now() - lastWsRx > 12000) {
+      // Lâu không nghe gì từ máy chủ: chờ thêm vài giây cho tin trả lời rồi mới kết luận
+      setTimeout(() => {
+        if (approved && !reconnecting && Date.now() - lastWsRx > 12000) onSocketDead('Máy chủ không phản hồi');
+      }, 3000);
+    }
+  }
+
+  setInterval(probeServer, 4000);
+
+  // Trang vừa được mở lại hoặc mạng vừa có lại: thử nối ngay, không chờ hết khoảng chờ
+  function retryNow() {
+    if (!reconnecting) return;
+    if (ws && ws.readyState === WebSocket.OPEN) return; // đã nối, đang chờ máy chủ trả lời
+    scheduleReconnect(0);
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (reconnecting) retryNow();
+    else probeServer();
+  });
+
+  window.addEventListener('online', () => {
+    if (reconnecting) retryNow();
+    else onSocketDead('Mạng vừa có lại');
+  });
+
+  // Máy tính yêu cầu dựng lại kết nối trực tiếp (giữ nguyên phòng và yêu cầu bật webcam, micro)
+  function restartPeer() {
+    log('Máy tính yêu cầu dựng lại kết nối trực tiếp');
+    if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    if (camTrack) { camTrack.onended = null; camTrack.stop(); camTrack = null; }
+    if (micTrack) { micTrack.onended = null; micTrack.stop(); micTrack = null; }
+    if (pc) { pc.close(); pc = null; }
+    control = null;
+    remoteSet = false;
+    pendingIce = [];
+    lanes.video = null;
+    lanes.audio = null;
+    for (const t of remoteStream.getTracks()) remoteStream.removeTrack(t);
+    setLine('peer', 'Kết nối trực tiếp: đang dựng lại...');
+    startPeer(iceServersCache);
+    refresh();
+  }
 
   async function handle(m) {
     switch (m.type) {
@@ -555,9 +732,25 @@
         show('waiting', 'Chờ máy tính cho phép...', 'Hãy bấm Cho phép trên máy tính.');
         break;
       case 'joined':
+        approved = true;
+        resumeToken = m.resumeToken || null;
+        resumeWindowSec = m.resumeWindowSec || 90;
+        iceServersCache = m.iceServers || [];
         show('ok', 'Đã kết nối', 'Đang nối trực tiếp với máy tính...');
         $('media').hidden = false;
-        startPeer(m.iceServers || []);
+        startPeer(iceServersCache);
+        break;
+      case 'resumed':
+        stopReconnect();
+        approved = true;
+        resumeToken = m.resumeToken || null;
+        resumeWindowSec = m.resumeWindowSec || resumeWindowSec;
+        if (m.iceServers) iceServersCache = m.iceServers;
+        show('ok', 'Đã kết nối', 'Đã nối lại với máy chủ.');
+        log('Đã nối lại phòng' + (isConnected() ? ', kết nối trực tiếp vẫn còn' : ''));
+        break;
+      case 'restart':
+        restartPeer();
         break;
       case 'offer':
         if (pc) await onOffer(m);
@@ -567,24 +760,39 @@
         if (remoteSet) await addRemoteIce(m);
         else pendingIce.push(m);
         break;
+      case 'desktop_away':
+        log('Máy tính tạm mất kết nối máy chủ, đang chờ');
+        $('detail').textContent = 'Máy tính tạm mất kết nối máy chủ, đang chờ nối lại...';
+        break;
+      case 'desktop_back':
+        log('Máy tính đã nối lại');
+        $('detail').textContent = '';
+        break;
       case 'rejected':
+        approved = false;
+        resumeToken = null;
         show('error', 'Máy tính đã từ chối', 'Quét mã QR mới nếu muốn thử lại.');
         break;
       case 'join_rejected':
         show('error', 'Không vào được', REASONS[m.reason] || 'Hãy quét lại mã QR trên máy tính.');
         break;
+      case 'resume_rejected':
+        stopReconnect();
+        approved = false;
+        resumeToken = null;
+        closePeer();
+        show('error', 'Không nối lại được', RESUME_REASONS[m.reason] || 'Hãy quét lại mã QR trên máy tính.');
+        break;
       case 'bye':
+        stopReconnect();
+        approved = false;
+        resumeToken = null;
         closePeer();
         show('error', 'Máy tính đã ngắt kết nối', 'Quét mã QR mới để kết nối lại.');
         break;
     }
   }
 
-  ws.onclose = () => {
-    const state = document.body.dataset.state;
-    if (state === 'connecting' || state === 'waiting' || state === 'ok') {
-      closePeer();
-      show('error', 'Mất kết nối', 'Hãy quét lại mã QR trên máy tính.');
-    }
-  };
+  show('connecting', 'Đang kết nối...', '');
+  connectWs(false);
 })();

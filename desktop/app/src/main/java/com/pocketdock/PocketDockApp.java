@@ -18,6 +18,9 @@ import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.image.ImageView;
@@ -30,6 +33,7 @@ import javafx.stage.Stage;
 import javafx.util.Duration;
 
 import java.net.URI;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Optional;
@@ -58,12 +62,33 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
     private final TextField linkField = new TextField();
     private final Button retryButton = new Button("Kết nối lại");
     private final Button disconnectButton = new Button("Ngắt kết nối thiết bị");
+    private final Button checkButton = new Button("Kiểm tra hệ thống");
+    private SystemCheckView checkView;
+    private DevicesView devicesView;
 
     private volatile SignalingClient client;
     private Timeline countdown;
     private int secondsLeft;
     private Alert pendingDialog;
     private boolean deviceGone;
+    private Database db;
+    private long dbSessionId = -1;
+    private String endReason = "closed";
+    private String currentDevice = "";
+
+    // Giữ phòng và tự nối lại khi mất kết nối tới máy chủ
+    private volatile String sessionId;
+    private volatile String resumeToken;
+    private volatile boolean resumeMode;
+    private int resumeWindowSec = 90;
+    private boolean sessionActive;
+    private boolean phoneAway;
+    private volatile String peerStateCode = "NEW";
+    private volatile int peerGeneration;
+    private Timeline reconnectTimer;
+    private Timeline peerCheck;
+    private int reconnectAttempt;
+    private long resumeDeadlineNs;
 
     private JsonArray iceServers = new JsonArray();
     private volatile PeerSession peer;
@@ -95,6 +120,7 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
     @Override
     public void start(Stage primaryStage) {
         this.stage = primaryStage;
+        openDatabase();
 
         Label title = new Label("PocketDock");
         title.setStyle("-fx-font-size: 26px; -fx-font-weight: bold;");
@@ -119,15 +145,31 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
 
         retryButton.setOnAction(e -> connect());
         disconnectButton.setOnAction(e -> disconnectDevice());
+        checkButton.setOnAction(e -> showSystemCheck());
 
         VBox root = new VBox(10, title, qrView, countdownLabel, statusLabel,
                 peerLabel, channelLabel, mediaLabel, signalLabel, messagesLabel, touchLabel,
-                linkHint, linkField, retryButton, disconnectButton);
+                linkHint, linkField, retryButton, disconnectButton, checkButton);
         root.setAlignment(Pos.CENTER);
         root.setPadding(new Insets(24));
 
+        // Màn hình chính có ba tab: Kết nối (như cũ, có thanh cuộn), Thiết bị, Cài đặt
+        ScrollPane connectPane = new ScrollPane(root);
+        connectPane.setFitToWidth(true);
+        Tab connectTab = new Tab("Kết nối", connectPane);
+        devicesView = new DevicesView(() -> db, name -> sessionActive && name.equals(currentDevice));
+        Tab devicesTab = new Tab("Thiết bị", devicesView.node());
+        Tab settingsTab = new Tab("Cài đặt", new SettingsView(db, SERVER, PUBLIC_URL).node());
+        connectTab.setClosable(false);
+        devicesTab.setClosable(false);
+        settingsTab.setClosable(false);
+        TabPane tabs = new TabPane(connectTab, devicesTab, settingsTab);
+        tabs.getSelectionModel().selectedItemProperty().addListener((observable, oldTab, newTab) -> {
+            if (newTab == devicesTab) devicesView.refresh();
+        });
+
         stage.setTitle("PocketDock");
-        stage.setScene(new Scene(root, 460, 780));
+        stage.setScene(new Scene(tabs, 480, 760));
         stage.show();
 
         ticker = new Timeline(new KeyFrame(Duration.seconds(1), e -> tick()));
@@ -140,6 +182,7 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
     @Override
     public void stop() {
         if (ticker != null) ticker.stop();
+        endReason = "app_closed";
         closePeer();
         if (client != null) client.close();
         worker.execute(RtcRuntime::shutdown);
@@ -149,11 +192,17 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+        if (db != null) db.close();
     }
 
     // ---------- kết nối máy chủ ----------
 
     private void connect() {
+        cancelReconnectTimer();
+        resumeMode = false;
+        sessionActive = false;
+        phoneAway = false;
+        resumeToken = null;
         closePeer();
         if (client != null) client.close();
         stopCountdown();
@@ -171,7 +220,16 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
 
     @Override
     public void onOpen() {
-        client.send("create_session");
+        if (resumeMode && sessionId != null && resumeToken != null) {
+            JsonObject resume = new JsonObject();
+            resume.addProperty("type", "resume");
+            resume.addProperty("role", "desktop");
+            resume.addProperty("sessionId", sessionId);
+            resume.addProperty("resumeToken", resumeToken);
+            client.send(resume);
+        } else {
+            client.send("create_session");
+        }
     }
 
     @Override
@@ -195,11 +253,54 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
     private void handle(String type, JsonObject m) {
         switch (type) {
             case "session_created" -> {
+                sessionId = m.get("sessionId").getAsString();
+                resumeToken = null;
+                sessionActive = false;
+                phoneAway = false;
+                reconnectAttempt = 0;
                 iceServers = m.has("iceServers") && m.get("iceServers").isJsonArray()
                         ? m.getAsJsonArray("iceServers") : new JsonArray();
                 showQr(m.get("sessionId").getAsString(),
                         m.get("token").getAsString(),
                         m.get("expiresInSec").getAsInt());
+            }
+            case "resume_info" -> {
+                String token = str(m, "resumeToken");
+                if (token != null) resumeToken = token;
+                if (m.has("resumeWindowSec")) resumeWindowSec = m.get("resumeWindowSec").getAsInt();
+            }
+            case "device_away" -> {
+                phoneAway = true;
+                if (m.has("resumeWindowSec")) resumeWindowSec = m.get("resumeWindowSec").getAsInt();
+                EventLog.add("May chu bao: dien thoai tam vang, giu phong " + resumeWindowSec + " giay");
+                setStatus("Điện thoại tạm vắng, đang chờ nối lại (tối đa " + resumeWindowSec + " giây)...");
+            }
+            case "device_back" -> {
+                phoneAway = false;
+                EventLog.add("May chu bao: dien thoai da quay lai");
+                keepOrRestartPeer("dien thoai quay lai");
+            }
+            case "resumed" -> {
+                resumeMode = false;
+                cancelReconnectTimer();
+                reconnectAttempt = 0;
+                String token = str(m, "resumeToken");
+                if (token != null) resumeToken = token;
+                if (m.has("resumeWindowSec")) resumeWindowSec = m.get("resumeWindowSec").getAsInt();
+                boolean phonePresent = m.has("phonePresent") && m.get("phonePresent").getAsBoolean();
+                EventLog.add("May chu: da nhoi lai phong (dien thoai " + (phonePresent ? "con" : "dang vang") + ")");
+                if (!phonePresent) {
+                    phoneAway = true;
+                    setStatus("Đã nối lại máy chủ, điện thoại đang tạm vắng...");
+                } else {
+                    phoneAway = false;
+                    keepOrRestartPeer("nhoi lai phong");
+                }
+            }
+            case "resume_rejected" -> {
+                String reason = str(m, "reason");
+                EventLog.add("May chu tu choi nhoi lai phong: " + reason);
+                giveUpResume("may chu tu choi (" + reason + ")");
             }
             case "session_expired" -> {
                 setStatus("Mã QR đã hết hạn, đang tạo mã mới...");
@@ -227,6 +328,10 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
             case "device_left" -> {
                 deviceGone = true;
                 EventLog.add("May chu bao: dien thoai da roi di");
+                endReason = "phone_left";
+                sessionActive = false;
+                phoneAway = false;
+                resumeToken = null;
                 closePeer();
                 if (pendingDialog != null) pendingDialog.close();
                 setStatus("Thiết bị đã rời đi, đang tạo mã mới...");
@@ -271,7 +376,11 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
             countdownLabel.setText("");
             setStatus("Đã kết nối với: " + device);
             EventLog.add("---- Phien moi: da cho phep thiet bi " + device + " ----");
+            currentDevice = device;
+            sessionActive = true;
+            phoneAway = false;
             startPeer();
+            startDbSession(device);
         } else {
             client.send("reject");
             setStatus("Đã từ chối thiết bị, đang tạo mã mới...");
@@ -280,6 +389,11 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
     }
 
     private void disconnectDevice() {
+        endReason = "desktop_disconnect";
+        resumeMode = false;
+        sessionActive = false;
+        phoneAway = false;
+        resumeToken = null;
         closePeer();
         client.send("bye");
         setStatus("Đã ngắt kết nối thiết bị, đang tạo mã mới...");
@@ -287,18 +401,26 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
     }
 
     private void connectionLost(String text) {
+        if (sessionActive && resumeToken != null && sessionId != null) {
+            // Đang có điện thoại: giữ nguyên kết nối trực tiếp và thử nối lại phòng
+            startResume(text);
+            return;
+        }
+        endReason = "server_lost";
         closePeer();
         stopCountdown();
         countdownLabel.setText("");
         showOnly(false, false, false);
         setShown(retryButton, true);
         setStatus(text);
+        scheduleRetry();
     }
 
     // ---------- nối trực tiếp với điện thoại ----------
 
     private void startPeer() {
-        closePeer();
+        teardownPeer();
+        peerStateCode = "NEW";
         peerLabel.setText("Kết nối trực tiếp: đang khởi tạo...");
         channelLabel.setText("Kênh điều khiển: chưa mở");
         webcamState = "Webcam điện thoại: tắt";
@@ -315,6 +437,7 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         longestGapSec = 0;
         muteButton.setSelected(false);
 
+        final int generation = ++peerGeneration;
         PeerSession session = new PeerSession(iceServers, new PeerSession.Listener() {
             @Override
             public void onSignal(JsonObject message) {
@@ -326,6 +449,11 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
             public void onPeerState(String text) {
                 EventLog.add("May tinh: " + text);
                 Platform.runLater(() -> peerLabel.setText(text));
+            }
+
+            @Override
+            public void onPeerStateCode(String code) {
+                if (generation == peerGeneration) peerStateCode = code;
             }
 
             @Override
@@ -356,8 +484,184 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         });
     }
 
+    // ---------- tự nối lại khi mất kết nối máy chủ ----------
+
+    private static String str(JsonObject m, String key) {
+        return m.has(key) && !m.get(key).isJsonNull() ? m.get(key).getAsString() : null;
+    }
+
+    /** Kết nối trực tiếp còn tốt: trạng thái đã nối và vừa nhận được tin từ điện thoại. */
+    private boolean peerHealthy() {
+        return peer != null
+                && "CONNECTED".equals(peerStateCode)
+                && lastSignalNs != 0
+                && (System.nanoTime() - lastSignalNs) / 1e9 <= 6;
+    }
+
+    /**
+     * Điện thoại hoặc phòng vừa nối lại: kết nối trực tiếp còn tốt thì giữ. Nếu chưa chắc (nhịp tim cuối đã cũ
+     * vì điện thoại vừa mở lại trang) thì chờ tối đa 5 giây cho nhịp tim đầu tiên rồi mới quyết định dựng lại.
+     */
+    private void keepOrRestartPeer(String reason) {
+        if (peerCheck != null) peerCheck.stop();
+        if (peerHealthy()) {
+            EventLog.add("Giu nguyen ket noi truc tiep");
+            setStatus("Đã kết nối với: " + currentDevice);
+            return;
+        }
+        if (peer == null || "FAILED".equals(peerStateCode) || "CLOSED".equals(peerStateCode)) {
+            restartPeer(reason);
+            return;
+        }
+        EventLog.add("Cho nhip tim dien thoai toi da 5 giay truoc khi quyet dinh dung lai");
+        int[] left = {5};
+        peerCheck = new Timeline(new KeyFrame(Duration.seconds(1), e -> {
+            if (!sessionActive || phoneAway) {
+                peerCheck.stop();
+            } else if (peerHealthy()) {
+                peerCheck.stop();
+                EventLog.add("Giu nguyen ket noi truc tiep (nhip tim da tro lai)");
+                setStatus("Đã kết nối với: " + currentDevice);
+            } else if (--left[0] <= 0) {
+                peerCheck.stop();
+                restartPeer(reason);
+            }
+        }));
+        peerCheck.setCycleCount(Timeline.INDEFINITE);
+        peerCheck.play();
+    }
+
+    /** Dựng lại kết nối trực tiếp mà vẫn giữ nguyên phiên (không ghi đóng phiên vào CSDL). */
+    private void restartPeer(String reason) {
+        EventLog.add("Dung lai ket noi truc tiep: " + reason);
+        SignalingClient c = client;
+        if (c != null) c.send("restart");
+        startPeer();
+        setStatus("Đã kết nối với: " + currentDevice);
+    }
+
+    private void startResume(String reason) {
+        if (!resumeMode) {
+            resumeMode = true;
+            reconnectAttempt = 0;
+            resumeDeadlineNs = System.nanoTime() + resumeWindowSec * 1_000_000_000L;
+            EventLog.add("Mat ket noi may chu (" + reason + "), thu nhoi lai phong trong " + resumeWindowSec + " giay");
+        }
+        scheduleResumeAttempt();
+    }
+
+    private void scheduleResumeAttempt() {
+        cancelReconnectTimer();
+        long left = (resumeDeadlineNs - System.nanoTime()) / 1_000_000_000L;
+        if (left <= 0) {
+            giveUpResume("het thoi gian giu phong");
+            return;
+        }
+        int delay = Math.min(1 << Math.min(reconnectAttempt, 3), 8);
+        reconnectAttempt++;
+        setStatus("Mất kết nối máy chủ, thử nối lại sau " + delay + " giây (còn khoảng " + left + " giây giữ phòng)");
+        reconnectTimer = new Timeline(new KeyFrame(Duration.seconds(delay), e -> doResumeConnect()));
+        reconnectTimer.play();
+    }
+
+    private void doResumeConnect() {
+        if (!resumeMode) return;
+        SignalingClient old = client;
+        if (old != null) old.close();
+        client = new SignalingClient(this);
+        client.connect(wsUri());
+    }
+
+    /** Không nối lại được phòng cũ: bỏ phiên cũ và tạo mã QR mới. */
+    private void giveUpResume(String why) {
+        EventLog.add("Bo nhoi lai phong: " + why);
+        resumeMode = false;
+        sessionActive = false;
+        phoneAway = false;
+        resumeToken = null;
+        endReason = "server_lost";
+        closePeer();
+        connect();
+    }
+
+    /** Chưa có điện thoại: tự thử kết nối lại máy chủ, khoảng chờ tăng dần 2, 4, 8, 15 giây. */
+    private void scheduleRetry() {
+        cancelReconnectTimer();
+        int delay = Math.min(2 << Math.min(reconnectAttempt, 3), 15);
+        reconnectAttempt++;
+        statusLabel.setText(statusLabel.getText() + " Tự thử lại sau " + delay + " giây.");
+        reconnectTimer = new Timeline(new KeyFrame(Duration.seconds(delay), e -> connect()));
+        reconnectTimer.play();
+    }
+
+    private void cancelReconnectTimer() {
+        if (reconnectTimer != null) {
+            reconnectTimer.stop();
+            reconnectTimer = null;
+        }
+    }
+
+    // ---------- kiểm tra hệ thống ----------
+
+    private void showSystemCheck() {
+        if (checkView == null) {
+            checkView = new SystemCheckView(stage, () -> {
+                Rectangle2D screen = Screen.getPrimary().getBounds();
+                String screenInfo = (int) screen.getWidth() + "x" + (int) screen.getHeight()
+                        + ", phóng " + Math.round(Screen.getPrimary().getOutputScaleX() * 100) + "%";
+                return new SystemCheck.Context(SERVER, PUBLIC_URL, db, screenInfo, Path.of("ketqua").toAbsolutePath());
+            });
+        }
+        checkView.show();
+    }
+
+    // ---------- cơ sở dữ liệu SQLite ----------
+
+    private void openDatabase() {
+        try {
+            db = Database.open(Database.defaultPath());
+            db.closeStaleSessions();
+            EventLog.add("CSDL: " + db.path() + ", " + db.countDevices() + " thiet bi, " + db.countSessions() + " phien");
+        } catch (RuntimeException e) {
+            db = null;
+            EventLog.add("Khong mo duoc CSDL: " + rootMessage(e));
+        }
+    }
+
+    private void startDbSession(String device) {
+        if (db == null) return;
+        try {
+            dbSessionId = db.startSession(device);
+            if (devicesView != null) devicesView.refresh();
+        } catch (RuntimeException e) {
+            dbSessionId = -1;
+            EventLog.add("Khong ghi duoc phien vao CSDL: " + rootMessage(e));
+        }
+    }
+
+    private void endDbSession() {
+        String reason = endReason;
+        endReason = "closed";
+        if (db == null || dbSessionId < 0) return;
+        long id = dbSessionId;
+        dbSessionId = -1;
+        try {
+            db.endSession(id, reason);
+            if (devicesView != null) devicesView.refresh();
+            EventLog.add("CSDL: dong phien " + id + " (" + reason + ")");
+        } catch (RuntimeException e) {
+            EventLog.add("Khong dong duoc phien trong CSDL: " + rootMessage(e));
+        }
+    }
+
     /** Gọi trên luồng giao diện. */
     private void closePeer() {
+        endDbSession();
+        teardownPeer();
+    }
+
+    /** Chỉ đóng kết nối trực tiếp hiện tại, không kết thúc phiên (dùng khi dựng lại kết nối). */
+    private void teardownPeer() {
         PeerSession p = peer;
         peer = null;
         if (p != null) worker.execute(p::close);

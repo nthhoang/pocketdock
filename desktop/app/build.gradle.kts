@@ -30,6 +30,7 @@ dependencies {
     implementation("org.openjfx:javafx-controls:$fxVersion:$fxPlatform")
     implementation("com.google.zxing:core:3.5.3")
     implementation("com.google.code.gson:gson:2.11.0")
+    implementation("org.xerial:sqlite-jdbc:3.53.4.0")
 
     // WebRTC: phần Java và phần mã gốc theo hệ điều hành
     implementation("dev.onvoid.webrtc:webrtc-java:$rtcVersion@jar")

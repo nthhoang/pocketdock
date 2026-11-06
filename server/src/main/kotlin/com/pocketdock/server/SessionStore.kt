@@ -10,18 +10,31 @@ class SessionStore(
     val ttlMillis: Long = 120_000,
     private val maxFailures: Int = 5,
     private val failureWindowMillis: Long = 60_000,
+    val resumeWindowMillis: Long = 90_000,
 ) {
     enum class State { WAITING, PENDING_APPROVAL, CONNECTED, EXPIRED, REJECTED }
     enum class JoinError { NOT_FOUND, BAD_TOKEN, EXPIRED, ALREADY_USED, TOO_MANY_ATTEMPTS }
+    enum class Role { PHONE, DESKTOP }
+    enum class ResumeError { NOT_FOUND, BAD_TOKEN, EXPIRED, TOO_MANY_ATTEMPTS }
 
     class Session(val id: String, val token: String, val createdAt: Long) {
         @Volatile
         var state: State = State.WAITING
+
+        // Mã tiếp tục của từng bên và thời điểm hết hạn khi bên đó đang tạm vắng.
+        // Chỉ được đọc và ghi bên trong SessionStore, dưới khóa lock.
+        internal val resumeTokens = HashMap<Role, String>()
+        internal val awayUntil = HashMap<Role, Long>()
     }
 
     sealed interface JoinResult {
         data class Ok(val session: Session) : JoinResult
         data class Failed(val error: JoinError) : JoinResult
+    }
+
+    sealed interface ResumeResult {
+        data class Ok(val session: Session, val newToken: String) : ResumeResult
+        data class Failed(val error: ResumeError) : ResumeResult
     }
 
     private val random = SecureRandom()
@@ -80,6 +93,72 @@ class SessionStore(
         val session = sessions[id]
         if (session != null && session.state == State.PENDING_APPROVAL) {
             session.state = State.CONNECTED
+            session.resumeTokens[Role.PHONE] = randomText(16)
+            session.resumeTokens[Role.DESKTOP] = randomText(16)
+            true
+        } else {
+            false
+        }
+    }
+
+    /** Mã tiếp tục hiện tại của một bên (128 bit). Chỉ có sau khi phiên được cho phép. */
+    fun resumeToken(id: String, role: Role): String? = synchronized(lock) {
+        sessions[id]?.resumeTokens?.get(role)
+    }
+
+    /** Đánh dấu một bên đang tạm vắng và bắt đầu đếm thời gian giữ phòng. */
+    fun markAway(id: String, role: Role): Boolean = synchronized(lock) {
+        val session = sessions[id] ?: return@synchronized false
+        if (session.state != State.CONNECTED) return@synchronized false
+        session.awayUntil[role] = clock() + resumeWindowMillis
+        true
+    }
+
+    /**
+     * Một bên nối lại phòng bằng mã tiếp tục. Mã chỉ dùng được một lần: thành công thì
+     * mã cũ hết hiệu lực và trả về mã mới. Thử sai quá nhiều lần thì bị khóa tạm thời
+     * (dùng chung bộ đếm với join).
+     */
+    fun resume(sessionId: String?, role: Role, token: String?, clientKey: String): ResumeResult =
+        synchronized(lock) {
+            val now = clock()
+            val recent = failures.getOrPut(clientKey) { ArrayDeque() }
+            while (recent.isNotEmpty() && now - recent.first() > failureWindowMillis) recent.removeFirst()
+            if (recent.size >= maxFailures) {
+                return@synchronized ResumeResult.Failed(ResumeError.TOO_MANY_ATTEMPTS)
+            }
+
+            val session = sessionId?.let { sessions[it] }
+            if (session == null || session.state != State.CONNECTED) {
+                recent.addLast(now)
+                return@synchronized ResumeResult.Failed(ResumeError.NOT_FOUND)
+            }
+
+            val expected = session.resumeTokens[role]
+            val tokenOk = token != null && expected != null &&
+                MessageDigest.isEqual(token.toByteArray(), expected.toByteArray())
+            if (!tokenOk) {
+                recent.addLast(now)
+                return@synchronized ResumeResult.Failed(ResumeError.BAD_TOKEN)
+            }
+
+            val until = session.awayUntil[role]
+            if (until != null && now > until) {
+                return@synchronized ResumeResult.Failed(ResumeError.EXPIRED)
+            }
+
+            val fresh = randomText(16)
+            session.resumeTokens[role] = fresh
+            session.awayUntil.remove(role)
+            ResumeResult.Ok(session, fresh)
+        }
+
+    /** Hết thời gian giữ phòng mà bên đó vẫn chưa quay lại thì xóa phòng. */
+    fun expireAway(id: String, role: Role): Boolean = synchronized(lock) {
+        val session = sessions[id] ?: return@synchronized false
+        val until = session.awayUntil[role] ?: return@synchronized false
+        if (clock() >= until) {
+            sessions.remove(id)
             true
         } else {
             false

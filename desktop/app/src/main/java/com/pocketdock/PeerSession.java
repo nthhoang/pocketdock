@@ -50,6 +50,9 @@ public final class PeerSession implements PeerConnectionObserver {
 
         void onPeerState(String text);
 
+        /** Mã trạng thái kết nối trực tiếp: NEW, CONNECTING, CONNECTED, DISCONNECTED, FAILED, CLOSED. */
+        default void onPeerStateCode(String code) { }
+
         void onChannelState(String text);
 
         /** Mọi tin nhận qua kênh điều khiển (kể cả nhịp tim). */
@@ -288,6 +291,7 @@ public final class PeerSession implements PeerConnectionObserver {
     @Override
     public void onConnectionChange(RTCPeerConnectionState state) {
         listener.onPeerState("Kết nối trực tiếp: " + describe(state));
+        listener.onPeerStateCode(state.name());
         if (state == RTCPeerConnectionState.CONNECTED) {
             startMedia();
         } else if (state == RTCPeerConnectionState.FAILED || state == RTCPeerConnectionState.CLOSED) {
