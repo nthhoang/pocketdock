@@ -8,3 +8,6 @@ dist/
 ketqua/
 
 /server/bin/
+.kotlin/
+**/bin/
+!w1/pack/
