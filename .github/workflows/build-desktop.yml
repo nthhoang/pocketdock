@@ -19,14 +19,49 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: Build jar
+
+      - name: Build và chạy test
         run: ./gradlew build
-      - name: Package app image
+
+      - name: Gom ứng dụng và thư viện vào một thư mục
+        run: |
+          ./gradlew installDist
+          echo "--- Nội dung app/build/install/app/lib ---"
+          ls -la app/build/install/app/lib
+          test -f app/build/install/app/lib/app.jar
+
+      - name: Tìm các module Java cần cho bản đóng gói
+        id: mods
+        run: |
+          MODS=$(jdeps --ignore-missing-deps --multi-release 21 --print-module-deps \
+            --class-path 'app/build/install/app/lib/*' app/build/install/app/lib/app.jar) || MODS=java.base
+          EXTRA=java.sql,java.net.http,java.desktop,java.logging,java.management,java.naming,java.xml,java.prefs,jdk.unsupported,jdk.crypto.ec
+          echo "jdeps: $MODS"
+          echo "list=$MODS,$EXTRA" >> "$GITHUB_OUTPUT"
+
+      - name: Đóng gói bản chạy Windows
         run: >
           jpackage --type app-image --name PocketDock
-          --input app/build/libs --main-jar app.jar
+          --input app/build/install/app/lib --main-jar app.jar
           --main-class com.pocketdock.App
+          --add-modules "${{ steps.mods.outputs.list }}"
           --win-console --dest dist
+
+      - name: Kiểm tra bản đóng gói có đủ thư viện
+        run: |
+          echo "--- dist/PocketDock ---"
+          ls dist/PocketDock
+          echo "--- dist/PocketDock/app ---"
+          ls dist/PocketDock/app
+          test -f dist/PocketDock/PocketDock.exe
+          ls dist/PocketDock/app | grep -i "javafx-graphics.*win"
+          ls dist/PocketDock/app | grep -i "webrtc-java.*windows"
+          ls dist/PocketDock/app | grep -i "sqlite-jdbc"
+          ls dist/PocketDock/app | grep -i "gson"
+          ls dist/PocketDock/app | grep -i "core-3"
+          echo "--- module trong runtime ---"
+          dist/PocketDock/runtime/bin/java --list-modules
+
       - uses: actions/upload-artifact@v4
         with:
           name: PocketDock-windows
