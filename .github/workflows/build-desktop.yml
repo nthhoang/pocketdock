@@ -60,7 +60,7 @@ jobs:
           ls dist/PocketDock/app | grep -i "gson"
           ls dist/PocketDock/app | grep -i "core-3"
           echo "--- module trong runtime ---"
-          dist/PocketDock/runtime/bin/java --list-modules
+          ls dist/PocketDock/runtime/bin; dist/PocketDock/runtime/bin/java.exe --list-modules || true
 
       - uses: actions/upload-artifact@v4
         with:
