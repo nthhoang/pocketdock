@@ -85,6 +85,8 @@ public final class PeerSession implements PeerConnectionObserver {
     private AudioTrack rxAudioTrack;
     private volatile TestPatternVideo pattern;
     private volatile BeepAudio beep;
+    private volatile ScreenCapture screen;
+    private volatile String screenQuality = "720p";
 
     // Hình và tiếng nhận từ điện thoại
     private volatile VideoTrackSink remoteVideoSink;
@@ -115,6 +117,11 @@ public final class PeerSession implements PeerConnectionObserver {
         }
     }
 
+    /** Chất lượng chụp màn hình ("720p" hoặc "1080p"). Gọi trước start(). */
+    public void setScreenQuality(String quality) {
+        this.screenQuality = UiText.normalizeQuality(quality);
+    }
+
     // ---------- khởi tạo ----------
 
     public void start() {
@@ -130,7 +137,15 @@ public final class PeerSession implements PeerConnectionObserver {
         pc = factory.createPeerConnection(buildConfig(), this);
 
         // Làn 1 và 2: máy tính → điện thoại
-        videoTrack = factory.createVideoTrack("screen", videoSource);
+        ScreenCapture capture = ScreenCapture.tryCreate(ScreenQuality.of(screenQuality));
+        if (capture != null) {
+            screen = capture;
+            pattern = null;
+            videoTrack = factory.createVideoTrack("screen", capture.source());
+        } else {
+            videoTrack = factory.createVideoTrack("screen", videoSource);
+            EventLog.add("Nguon hinh: dung hinh thu (khong chup man hinh that)");
+        }
         audioTrack = factory.createAudioTrack("system-audio", audioSource);
         addLane(videoTrack, RTCRtpTransceiverDirection.SEND_ONLY, true);
         addLane(audioTrack, RTCRtpTransceiverDirection.SEND_ONLY, true);
@@ -342,6 +357,8 @@ public final class PeerSession implements PeerConnectionObserver {
         BeepAudio a = beep;
         if (v != null) v.start();
         if (a != null) a.start();
+        ScreenCapture s = screen;
+        if (s != null) s.start();
     }
 
     private void stopMedia() {
@@ -349,6 +366,8 @@ public final class PeerSession implements PeerConnectionObserver {
         BeepAudio a = beep;
         if (v != null) v.stop();
         if (a != null) a.stop();
+        ScreenCapture s = screen;
+        if (s != null) s.stop();
     }
 
     // ---------- kênh điều khiển ----------
@@ -453,6 +472,7 @@ public final class PeerSession implements PeerConnectionObserver {
         quietly(() -> { if (audioTrack != null) audioTrack.dispose(); });
         quietly(() -> { if (rxVideoTrack != null) rxVideoTrack.dispose(); });
         quietly(() -> { if (rxAudioTrack != null) rxAudioTrack.dispose(); });
+        quietly(() -> { ScreenCapture s = screen; if (s != null) s.dispose(); });
         quietly(() -> { if (videoSource != null) videoSource.dispose(); });
         quietly(() -> { if (audioSource != null) audioSource.dispose(); });
         quietly(() -> { if (rxVideoSource != null) rxVideoSource.dispose(); });

@@ -477,6 +477,8 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
 
         worker.execute(() -> {
             try {
+                session.setScreenQuality(db != null
+                        ? db.getSetting(SettingsView.KEY_QUALITY, "720p") : "720p");
                 session.start();
             } catch (Throwable t) {
                 Platform.runLater(() -> peerLabel.setText("Lỗi khởi tạo WebRTC: " + rootMessage(t)));
