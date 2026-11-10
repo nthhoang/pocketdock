@@ -58,6 +58,8 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
     private final Label messagesLabel = new Label();
     private final Label touchLabel = new Label();
     private long touchCount;
+    private MouseController mouse;
+    private boolean mouseTried;
     private final Label linkHint = new Label("Không quét được? Sao chép địa chỉ này:");
     private final TextField linkField = new TextField();
     private final Button retryButton = new Button("Kết nối lại");
@@ -184,6 +186,7 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         if (ticker != null) ticker.stop();
         endReason = "app_closed";
         closePeer();
+        if (mouse != null) mouse.close();
         if (client != null) client.close();
         worker.execute(RtcRuntime::shutdown);
         worker.shutdown();
@@ -666,6 +669,8 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
     private void teardownPeer() {
         PeerSession p = peer;
         peer = null;
+        MouseController mc = mouse;
+        if (mc != null) mc.releaseAll();
         if (p != null) worker.execute(p::close);
         resetMediaUi();
     }
@@ -694,7 +699,7 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         messagesLabel.setText("Tin nhắn từ điện thoại:\n" + String.join("\n", recentMessages));
     }
 
-    /** Nhận tọa độ chạm từ điện thoại, đổi sang tọa độ màn hình và ghi log (chưa điều khiển chuột thật). */
+    /** Nhận tọa độ chạm từ điện thoại, đổi sang tọa độ màn hình, ghi log và điều khiển chuột thật khi được bật. */
     private void handleTouch(String text) {
         try {
             JsonObject o = JsonParser.parseString(text).getAsJsonObject();
@@ -705,8 +710,12 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
             TouchMapper.Bounds bounds = new TouchMapper.Bounds(
                     (int) screen.getMinX(), (int) screen.getMinY(),
                     (int) screen.getWidth(), (int) screen.getHeight());
+            MouseController mc = mouseController(bounds);
+            if (mc != null) bounds = mc.bounds();
             var point = TouchMapper.map(nx, ny, bounds);
             if (point.isEmpty()) return;
+            int touchId = o.has("id") ? o.get("id").getAsInt() : 0;
+            if (mc != null) mc.handle(action, touchId, point.get());
             touchCount++;
             String line = action + " (" + nx + ", " + ny + ") -> màn hình (" + point.get().x + ", " + point.get().y + ")";
             touchLabel.setText("Chạm từ điện thoại: " + touchCount + " tin, mới nhất: " + line);
@@ -716,6 +725,23 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
         } catch (RuntimeException e) {
             EventLog.add("Tin cham khong hop le: " + text);
         }
+    }
+
+    /** Tạo bộ điều khiển chuột ở lần chạm đầu tiên. Trả về null nếu không bật (chỉ ghi log). */
+    private MouseController mouseController(TouchMapper.Bounds javafxBounds) {
+        if (!mouseTried) {
+            mouseTried = true;
+            mouse = MouseController.tryCreate();
+            if (mouse != null) {
+                TouchMapper.Bounds awt = mouse.bounds();
+                EventLog.add("Chuot: dieu khien that bang Robot; vung AWT " + awt.x() + "," + awt.y() + " "
+                        + awt.width() + "x" + awt.height() + ", vung JavaFX " + javafxBounds.x() + ","
+                        + javafxBounds.y() + " " + javafxBounds.width() + "x" + javafxBounds.height());
+            } else {
+                EventLog.add("Chuot: khong dieu khien chuot that (chi ghi log)");
+            }
+        }
+        return mouse;
     }
 
     private void handleRemoteMedia(String kind, boolean on, String detail) {
