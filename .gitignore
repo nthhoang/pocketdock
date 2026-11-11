@@ -11,3 +11,5 @@ ketqua/
 .kotlin/
 **/bin/
 !w1/pack/
+obj/
+desktop/audio-helper/publish/

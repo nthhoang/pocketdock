@@ -85,6 +85,7 @@ public final class PeerSession implements PeerConnectionObserver {
     private AudioTrack rxAudioTrack;
     private volatile TestPatternVideo pattern;
     private volatile BeepAudio beep;
+    private volatile LoopbackAudio loopback;
     private volatile ScreenCapture screen;
     private volatile String screenQuality = "720p";
 
@@ -133,6 +134,11 @@ public final class PeerSession implements PeerConnectionObserver {
         rxAudioSource = new CustomAudioSource();
         pattern = new TestPatternVideo(videoSource);
         beep = new BeepAudio(audioSource);
+        LoopbackAudio loop = LoopbackAudio.tryCreate(audioSource);
+        if (loop != null) {
+            loopback = loop;
+            beep = null;
+        }
 
         pc = factory.createPeerConnection(buildConfig(), this);
 
@@ -359,6 +365,8 @@ public final class PeerSession implements PeerConnectionObserver {
         if (a != null) a.start();
         ScreenCapture s = screen;
         if (s != null) s.start();
+        LoopbackAudio loopA = loopback;
+        if (loopA != null) loopA.start();
     }
 
     private void stopMedia() {
@@ -368,6 +376,8 @@ public final class PeerSession implements PeerConnectionObserver {
         if (a != null) a.stop();
         ScreenCapture s = screen;
         if (s != null) s.stop();
+        LoopbackAudio loopA = loopback;
+        if (loopA != null) loopA.stop();
     }
 
     // ---------- kênh điều khiển ----------
@@ -469,6 +479,7 @@ public final class PeerSession implements PeerConnectionObserver {
             if (p != null) p.close();
         });
         quietly(() -> { if (videoTrack != null) videoTrack.dispose(); });
+        quietly(() -> { LoopbackAudio l = loopback; if (l != null) l.stop(); });
         quietly(() -> { if (audioTrack != null) audioTrack.dispose(); });
         quietly(() -> { if (rxVideoTrack != null) rxVideoTrack.dispose(); });
         quietly(() -> { if (rxAudioTrack != null) rxAudioTrack.dispose(); });

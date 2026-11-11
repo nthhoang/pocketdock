@@ -19,6 +19,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build chương trình phụ lấy âm thanh (C#)
+        run: |
+          dotnet publish audio-helper/AudioHelper.csproj -c Release -o audio-helper/publish
+          ls -la audio-helper/publish
+          ./audio-helper/publish/PocketDock.AudioHelper.exe --version
 
       - name: Build và chạy test
         run: ./gradlew build
@@ -47,6 +56,11 @@ jobs:
           --add-modules "${{ steps.mods.outputs.list }}"
           --win-console --dest dist
 
+      - name: Chép chương trình phụ âm thanh vào bản đóng gói
+        run: |
+          mkdir -p dist/PocketDock/audio-helper
+          cp -r audio-helper/publish/* dist/PocketDock/audio-helper/
+
       - name: Kiểm tra bản đóng gói có đủ thư viện
         run: |
           echo "--- dist/PocketDock ---"
@@ -59,6 +73,9 @@ jobs:
           ls dist/PocketDock/app | grep -i "sqlite-jdbc"
           ls dist/PocketDock/app | grep -i "gson"
           ls dist/PocketDock/app | grep -i "core-3"
+          test -f dist/PocketDock/audio-helper/PocketDock.AudioHelper.exe
+          ls dist/PocketDock/audio-helper | grep -i "NAudio"
+          dist/PocketDock/audio-helper/PocketDock.AudioHelper.exe --version
           echo "--- module trong runtime ---"
           ls dist/PocketDock/runtime/bin; dist/PocketDock/runtime/bin/java.exe --list-modules || true
 
