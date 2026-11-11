@@ -173,6 +173,7 @@ public final class SystemCheck {
     // ---------- các phần chỉ có ý nghĩa trên Windows (sẽ làm ở M6) ----------
 
     static List<Result> windowsParts() {
+        if (isWindows()) return WindowsChecks.all();
         String[][] parts = {
                 {"Chụp màn hình thật và điều khiển chuột", "Cần bộ chụp màn hình và Robot (làm ở M6)."},
                 {"Âm thanh máy tính (WASAPI) và VB-Cable", "Cần chương trình lấy âm thanh C# và VB-Cable (làm ở M6)."},

@@ -79,7 +79,16 @@ jobs:
           echo "--- module trong runtime ---"
           ls dist/PocketDock/runtime/bin; dist/PocketDock/runtime/bin/java.exe --list-modules || true
 
+      - name: Chạy thử bản đóng gói (--selftest)
+        run: |
+          timeout 120 dist/PocketDock/PocketDock.exe --selftest || echo "selftest thoat voi ma $?"
+          test -f ketqua/selftest.txt
+          echo "--- ketqua/selftest.txt ---"
+          cat ketqua/selftest.txt
+
       - uses: actions/upload-artifact@v4
         with:
           name: PocketDock-windows
-          path: desktop/dist
+          path: |
+            desktop/dist
+            desktop/ketqua

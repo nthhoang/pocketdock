@@ -22,6 +22,7 @@ public final class SystemCheckView {
     private final Label summary = new Label();
     private final Button runButton = new Button("Chạy lại");
     private final Button copyButton = new Button("Sao chép báo cáo");
+    private final Button exportButton = new Button("Xuất báo cáo lỗi");
     private final Supplier<SystemCheck.Context> contextSupplier;
     private String lastReport = "";
     private boolean running;
@@ -32,6 +33,7 @@ public final class SystemCheckView {
         stage.setTitle("Kiểm tra hệ thống");
 
         output.setEditable(false);
+        summary.setWrapText(true);
         output.setWrapText(true);
         output.setStyle("-fx-font-family: monospace;");
         VBox.setVgrow(output, Priority.ALWAYS);
@@ -43,10 +45,23 @@ public final class SystemCheckView {
             Clipboard.getSystemClipboard().setContent(content);
             summary.setText("Đã sao chép báo cáo vào bộ nhớ tạm");
         });
+        exportButton.setOnAction(e -> {
+            if (lastReport.isEmpty()) {
+                summary.setText("Chưa có báo cáo để xuất, hãy chạy kiểm tra trước");
+                return;
+            }
+            try {
+                java.nio.file.Path file = ErrorReport.write(lastReport);
+                summary.setText("Đã lưu báo cáo lỗi: " + file);
+                EventLog.add("Xuat bao cao loi: " + file);
+            } catch (Exception ex) {
+                summary.setText("Không lưu được báo cáo lỗi: " + ex.getMessage());
+            }
+        });
         Button closeButton = new Button("Đóng");
         closeButton.setOnAction(e -> stage.hide());
 
-        HBox buttons = new HBox(8, runButton, copyButton, closeButton);
+        HBox buttons = new HBox(8, runButton, copyButton, exportButton, closeButton);
         Label intro = new Label("Báo cáo cho biết máy còn thiếu gì để PocketDock chạy được.");
         VBox root = new VBox(8, intro, summary, output, buttons);
         root.setPadding(new Insets(12));
