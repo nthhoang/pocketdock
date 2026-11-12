@@ -1,129 +1,126 @@
 # PocketDock
 
-PocketDock là một ứng dụng giúp kết nối điện thoại với máy tính trên cùng mạng LAN/Wi‑Fi hoặc qua Internet. Máy tính sẽ tạo ra một mã QR chứa thông tin phiên kết nối; điện thoại quét mã và xác nhận, sau đó hai thiết bị sẽ thiết lập kết nối trực tiếp qua WebRTC để trao đổi dữ liệu và điều khiển.
+**Sử dụng Java, Kotlin và WebRTC để xây dựng hệ thống PocketDock kết nối thiết bị di động thành thiết bị ngoại vi không dây cho máy tính theo mô hình P2P**
 
-Dự án này bao gồm ba thành phần chính:
-- `desktop/`: ứng dụng desktop (JavaFX) chạy trên máy tính, hiển thị QR, quản lý phiên làm việc và phê duyệt kết nối
-- `server/`: máy chủ Ktor dùng để tạo phiên, xác thực token và làm trung tâm tín hiệu WebSocket
-- `web/`: trang web chạy trên điện thoại, nhận thông tin từ QR và tham gia vào phiên kết nối
+Đồ án cơ sở 4, Trường Đại học Công nghệ thông tin và Truyền thông Việt - Hàn (VKU). Giảng viên hướng dẫn: ThS. Nguyễn Thanh Cẩm. Nhóm thực hiện: Nguyễn Hữu Quốc Bảo, Nguyễn Tam Huy Hoàng.
 
-## Tính năng chính
+## Đồ án làm gì
 
-- Tạo phiên kết nối nhanh chóng bằng mã QR
-- Kết nối giữa máy tính và điện thoại trực tiếp qua WebRTC
-- Hỗ trợ xác nhận thiết bị trước khi nối
-- Tự động hết hạn token để tránh lộ thông tin và bị lạm dụng
-- Hỗ trợ STUN/TURN thông qua cấu hình môi trường
-- Hiển thị trạng thái và độ trễ kết nối, hỗ trợ ping kiểm tra đường truyền
-- Cung cấp giao diện web trên điện thoại để tham gia kết nối mà không cần cài app riêng
+Nhiều khi ta có sẵn một chiếc điện thoại hoặc máy tính bảng nhưng không dùng đến. PocketDock cho phép dùng chúng như các thiết bị đi kèm của máy tính Windows:
 
-## Kiến trúc hệ thống
+- **Màn hình phụ:** hiện lại hình màn hình máy tính trên điện thoại, chạm vào màn hình điện thoại để điều khiển con trỏ chuột.
+- **Loa:** phát âm thanh của máy tính ra điện thoại.
+- **Webcam:** dùng camera của điện thoại làm webcam cho máy tính.
+- **Micro:** dùng micro của điện thoại làm micro cho máy tính.
 
-PocketDock hoạt động theo mô hình sau:
+Máy tính mở ứng dụng và hiện một mã QR. Điện thoại quét mã bằng trình duyệt (Safari hoặc Chrome), người dùng trên máy tính chọn "Cho phép", sau đó hình và tiếng được truyền trực tiếp giữa hai thiết bị bằng WebRTC (mô hình P2P). Máy chủ chỉ giúp hai bên tìm thấy nhau lúc bắt đầu.
 
-1. Máy tính chạy desktop app và gọi `create_session` tới server
-2. Server tạo một session ID và token, sau đó trả về QR code cho desktop app
-3. Người dùng quét QR trên điện thoại
-4. Điện thoại gửi `join` tới server với session ID và token
-5. Máy tính nhận thông báo `join_request` và có thể chấp nhận hoặc từ chối
-6. Khi được chấp nhận, hai thiết bị thiết lập kết nối trực tiếp WebRTC và trao đổi dữ liệu
+Để đưa webcam và micro của điện thoại vào các ứng dụng họp như Zoom hoặc Teams, đồ án dùng hai phần mềm có sẵn là OBS Virtual Camera và VB-Cable, không tự viết trình điều khiển.
 
-## Công nghệ sử dụng
+## Phạm vi
 
-- Kotlin + Ktor cho backend signaling server
-- JavaFX cho giao diện desktop
-- WebRTC cho truyền dữ liệu trực tiếp
-- JavaScript + HTML/CSS cho giao diện web trên điện thoại
-- QR code generation bằng ZXing
+Có làm: máy tính Windows 10/11; iPhone, iPad (iOS 16.4 trở lên) và điện thoại Android qua trình duyệt; cùng mạng Wi-Fi (có máy chủ TURN dự phòng); mỗi lần một điện thoại; bốn chức năng nêu trên.
 
-## Cấu trúc thư mục
+Không làm: màn hình mở rộng thật, trình điều khiển ảo tự viết, macOS, Linux (Ubuntu chỉ dùng để lập trình), nhiều thiết bị cùng lúc.
+
+## Tình hình hiện tại
+
+Đang làm theo lộ trình các mốc M0 đến M7, thử nghiệm W1 đến W3 trên Windows, rồi viết báo cáo.
+
+Đã xong và đã chạy thử trên Ubuntu với iPhone: ghép nối bằng mã QR, truyền hình thử và tiếng thử, dùng webcam và micro của điện thoại, giữ phòng 90 giây để nối lại, lưu lịch sử vào cơ sở dữ liệu, màn hình kiểm tra hệ thống.
+
+Đã viết xong nhưng **chưa thử trên máy Windows thật** (chờ đợt mượn máy W2): chụp màn hình thật, điều khiển chuột bằng chạm, lấy âm thanh của máy tính, đưa tiếng micro vào VB-Cable. Trên Ubuntu các phần này tự tắt và dùng hình thử, tiếng bíp để vẫn chạy được.
+
+Chưa làm: đóng gói máy chủ bằng Docker, thuê máy chủ và tên miền, máy chủ TURN (mốc M7).
+
+## Các thành phần
 
 ```text
 pocketdock/
-├── README.md
-├── server/           # Máy chủ signaling và quản lý session
-├── desktop/          # Ứng dụng desktop của máy tính
-├── web/              # Trang web mở trên điện thoại
-├── docs/             # Tài liệu, sơ đồ hoặc hướng dẫn phụ
-└── .github/          # Workflow CI/CD
+├── server/           Máy chủ Kotlin (Ktor): tạo phiên, kiểm tra mã, chuyển tin giữa hai bên
+├── web/              Trang web mở trên điện thoại (HTML, CSS, JavaScript)
+├── desktop/          Ứng dụng máy tính (Java, JavaFX, webrtc-java)
+│   └── audio-helper/ Chương trình phụ C# lấy âm thanh máy tính, và bản giả để thử trên Ubuntu
+├── w1/               Các chương trình thử nhỏ chạy trên Windows (đợt thử W1)
+├── docs/             Tài liệu (giao thức tin nhắn)
+└── .github/          Quy trình dựng bản chạy trên Windows
 ```
 
-## Yêu cầu môi trường
+## Công nghệ
 
-- Java 21+
-- Gradle Wrapper (đã tích hợp trong từng module)
-- Một trình duyệt trên điện thoại để mở URL kết nối
-- Mạng LAN/Wi‑Fi hoặc khả năng truy cập từ Internet tới server
+- Máy tính: JDK 21, JavaFX 21, webrtc-java 0.20.0, ZXing (tạo mã QR), SQLite, Gson.
+- Máy chủ: Kotlin 2.3, Ktor 3.5 (Netty, WebSocket).
+- Trang web: HTML, CSS, JavaScript thuần, không dùng framework.
+- Windows: chương trình phụ C# (.NET Framework 4.8, NAudio) để lấy âm thanh; đóng gói bằng jpackage trên GitHub Actions.
 
-## Khởi chạy nhanh
+## Chạy thử trên máy phát triển
 
-### 1. Chạy backend server
+Cần JDK 21 và cloudflared (để điện thoại truy cập được qua HTTPS). Mở ba cửa sổ dòng lệnh:
 
 ```bash
-cd server
-./gradlew run
+# 1. Máy chủ
+cd server && ./gradlew run
+
+# 2. Đường hầm HTTPS cho điện thoại
+cloudflared tunnel --url http://localhost:8081
+
+# 3. Ứng dụng máy tính (dán địa chỉ trycloudflare.com của bước 2)
+cd desktop && POCKETDOCK_PUBLIC_URL=https://xxxx.trycloudflare.com ./gradlew run
 ```
 
-Mặc định server chạy ở cổng `8081` và phục vụ nội dung web từ thư mục `../web`.
+Quét mã QR bằng điện thoại cùng mạng Wi-Fi, rồi chọn "Cho phép" trên máy tính. Địa chỉ trycloudflare.com đổi sau mỗi lần chạy. Sau khi sửa mã máy chủ phải khởi động lại máy chủ và quét mã QR mới.
 
-### 2. Chạy ứng dụng desktop
+Chạy kiểm thử: `cd server && ./gradlew test` và `cd desktop && ./gradlew test`.
+
+## Kiểm tra máy có đủ điều kiện chạy không
+
+Trong ứng dụng có màn hình "Kiểm tra hệ thống", kèm nút "Xuất báo cáo lỗi" để lưu một file chữ gửi cho người hỗ trợ. Có thể chạy kiểm tra mà không mở giao diện:
 
 ```bash
-cd desktop
-./gradlew run
+PocketDock.exe --selftest        # bản đóng gói trên Windows
+./gradlew run --args="--selftest"   # khi đang phát triển
 ```
 
-Ứng dụng sẽ tự động kết nối tới server mặc định `http://localhost:8081`.
+Kết quả được in ra màn hình và ghi vào `ketqua/selftest.txt`.
 
-Nếu cần thay đổi địa chỉ server hoặc public URL, hãy thiết lập biến môi trường:
+## Bản chạy trên Windows
 
-```bash
-export POCKETDOCK_SERVER=http://localhost:8081
-export POCKETDOCK_PUBLIC_URL=http://localhost:8081
-```
+GitHub Actions dựng bản chạy cho Windows ở mỗi lần đẩy mã lên (xem tab Actions). Tải gói `PocketDock-windows`, giải nén rồi chạy `PocketDock/PocketDock.exe`. Bản này chưa được ký số nên Windows có thể hiện cảnh báo SmartScreen.
 
-### 3. Kết nối điện thoại
+## Biến môi trường
 
-- Trên máy tính, desktop app sẽ hiển thị một mã QR
-- Mở trình duyệt trên điện thoại và quét mã QR
-- Điện thoại sẽ kết nối tới URL chứa session và token
-- Máy tính hiển thị thông báo yêu cầu kết nối; nhấn "Cho phép" để tiếp tục
+| Biến | Ý nghĩa | Mặc định |
+|---|---|---|
+| `PORT` | Cổng của máy chủ | 8081 |
+| `TOKEN_TTL_SECONDS` | Thời gian mã QR còn hiệu lực (giây) | 120 |
+| `STUN_URLS` | Danh sách máy chủ STUN | STUN của Google |
+| `WEB_DIR` | Thư mục trang web mà máy chủ phát | `../web` |
+| `POCKETDOCK_SERVER` | Địa chỉ máy chủ mà ứng dụng máy tính nối tới | `http://localhost:8081` |
+| `POCKETDOCK_PUBLIC_URL` | Địa chỉ điện thoại sẽ mở (phải là HTTPS) | giống `POCKETDOCK_SERVER` |
+| `POCKETDOCK_DB` | File cơ sở dữ liệu SQLite | `~/.pocketdock/pocketdock.db` |
+| `POCKETDOCK_SCREEN` | `real` ép chụp màn hình thật, `test` ép dùng hình thử | tự chọn theo hệ điều hành |
+| `POCKETDOCK_MOUSE` | `real` ép điều khiển chuột thật, `off` ép tắt | tự chọn theo hệ điều hành |
+| `POCKETDOCK_AUDIO` | `real` ép lấy âm thanh máy tính, `test` ép dùng tiếng bíp | tự chọn theo hệ điều hành |
+| `POCKETDOCK_AUDIO_HELPER` | Đường dẫn tới chương trình phụ lấy âm thanh | tự tìm |
+| `POCKETDOCK_MIC_ROUTE` | `real` ép đưa tiếng micro vào VB-Cable, `off` ép tắt | tự chọn theo hệ điều hành |
+| `POCKETDOCK_MIC_OUT` | Đoạn tên thiết bị phát nhận tiếng micro | `CABLE Input` |
 
-## Biến môi trường của server
+"Tự chọn theo hệ điều hành" nghĩa là bật trên Windows và tắt trên hệ điều hành khác. Chất lượng chụp màn hình (720p hoặc 1080p) chọn trong tab Cài đặt của ứng dụng.
 
-Server hỗ trợ các biến môi trường sau:
+## Bảo mật khi ghép nối
 
-```bash
-PORT=8081
-TOKEN_TTL_SECONDS=120
-STUN_URLS=stun:stun.l.google.com:19302
-WEB_DIR=../web
-```
+- Mã phòng 72 bit và mã xác thực 128 bit, mã chỉ dùng một lần và hết hạn sau 2 phút.
+- Nhập sai quá 5 lần trong 1 phút thì bên đó bị khóa tạm thời.
+- Điện thoại chỉ được nối khi người dùng trên máy tính bấm "Cho phép".
+- Điện thoại bị rớt mạng trong 90 giây thì nối lại được bằng mã tiếp tục dùng một lần mà không phải hỏi lại. Quá 90 giây phải quét mã QR mới.
 
-- `PORT`: cổng HTTP/WebSocket mà server lắng nghe
-- `TOKEN_TTL_SECONDS`: thời gian sống của token QR
-- `STUN_URLS`: danh sách STUN server dùng cho WebRTC
-- `WEB_DIR`: đường dẫn thư mục static web mà server phục vụ
+Chi tiết tin nhắn xem [docs/giao-thuc.md](docs/giao-thuc.md).
 
-## Luồng xử lý chính
+## Hạn chế đã biết
 
-- `SessionStore`: quản lý session, token, kiểm tra trạng thái và xác thực quyền join
-- `Signaling`: xử lý WebSocket, nhận và gửi tin nhắn giữa desktop và điện thoại
-- `PocketDockApp`: desktop UI, hiển thị QR, quản lý cảnh báo, phê duyệt device
-- `web/app.js`: code chạy trên browser điện thoại, tham gia vào phiên kết nối qua WebRTC
-
-## Lưu ý
-
-- Token QR chỉ có hiệu lực trong thời gian ngắn và sẽ hết hạn sau khi quá hạn hoặc đã được sử dụng
-- Việc nối trực tiếp qua WebRTC thường hoạt động tốt nhất khi cả hai thiết bị ở cùng mạng Wi‑Fi hoặc có thể truy cập được nhau qua NAT/STUN
-- Nếu máy tính và điện thoại không cùng mạng, hãy cấu hình STUN/TURN phù hợp để WebRTC có thể thực hiện handshake thành công
-
-## Mục tiêu của dự án
-
-PocketDock nhằm mục tiêu tạo ra một giải pháp đơn giản, nhanh và thân thiện với người dùng để kết nối máy tính với điện thoại mà không cần cài nhiều phần mềm phụ thuộc phức tạp. Dự án này phù hợp cho các trường hợp như:
-
-- Chia sẻ kết nối hoặc điều khiển từ điện thoại sang máy tính
-- Kiểm tra trạng thái của thiết bị trong môi trường phát triển
-- Tạo nền tảng cho các tính năng truyền dữ liệu, điều khiển hoặc hiển thị trực tiếp trong tương lai
-
-Nếu bạn đang phát triển hoặc mở rộng dự án, hãy bắt đầu từ `server/` để hiểu luồng signaling và từ `desktop/` để kiểm tra trải nghiệm người dùng trên máy tính.
+- Khóa màn hình hoặc chuyển trình duyệt sang nền lâu trên iPhone có thể làm mất kết nối, vì trình duyệt bị hệ điều hành tạm dừng. Hiện giữ phòng 90 giây để nối lại khi trang còn sống.
+- Webcam và micro đưa vào ứng dụng họp phải qua OBS Virtual Camera và VB-Cable.
+- Chương trình điều khiển chuột (Robot của Java) không điều khiển được cửa sổ đang chạy với quyền quản trị.
+- Chưa có màn hình mở rộng thật, chỉ nhân bản màn hình.
+- Bộ cài chưa được ký số.
+- Linux (Wayland) chưa hỗ trợ chụp màn hình và điều khiển chuột.
