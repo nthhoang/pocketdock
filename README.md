@@ -31,7 +31,7 @@ Không làm: màn hình mở rộng thật, trình điều khiển ảo tự vi�
 
 Đã viết xong nhưng **chưa thử trên máy Windows thật** (chờ đợt mượn máy W2): chụp màn hình thật, điều khiển chuột bằng chạm, lấy âm thanh của máy tính, đưa tiếng micro vào VB-Cable. Trên Ubuntu các phần này tự tắt và dùng hình thử, tiếng bíp để vẫn chạy được.
 
-Chưa làm: đóng gói máy chủ bằng Docker, thuê máy chủ và tên miền, máy chủ TURN (mốc M7).
+Để dành khi triển khai công khai: đóng gói bằng Docker, thuê máy chủ và tên miền riêng, máy chủ TURN tự dựng.
 
 ## Các thành phần
 
@@ -87,6 +87,8 @@ Kết quả được in ra màn hình và ghi vào `ketqua/selftest.txt`.
 
 GitHub Actions dựng bản chạy cho Windows ở mỗi lần đẩy mã lên (xem tab Actions). Tải gói `PocketDock-windows`, giải nén rồi chạy `PocketDock/PocketDock.exe`. Bản này chưa được ký số nên Windows có thể hiện cảnh báo SmartScreen.
 
+Để chạy gọn trên một máy Windows, bấm đúp `Chay-PocketDock.bat` (hoặc chạy `PocketDock.exe --auto`). Ứng dụng tự bật máy chủ đi kèm và đường hầm HTTPS cloudflared, lấy địa chỉ cho điện thoại rồi hiện mã QR; đóng ứng dụng thì cả hai cùng tắt. Máy cần có Internet, và lần đầu chương trình tự tải cloudflared. Khi phát triển trên Ubuntu cũng dùng được: chạy `cd server && ./gradlew installDist` một lần, rồi `cd desktop && ./gradlew run --args="--auto"` (cần cài sẵn cloudflared).
+
 ## Biến môi trường
 
 | Biến | Ý nghĩa | Mặc định |
@@ -104,6 +106,9 @@ GitHub Actions dựng bản chạy cho Windows ở mỗi lần đẩy mã lên (
 | `POCKETDOCK_AUDIO_HELPER` | Đường dẫn tới chương trình phụ lấy âm thanh | tự tìm |
 | `POCKETDOCK_MIC_ROUTE` | `real` ép đưa tiếng micro vào VB-Cable, `off` ép tắt | tự chọn theo hệ điều hành |
 | `POCKETDOCK_MIC_OUT` | Đoạn tên thiết bị phát nhận tiếng micro | `CABLE Input` |
+| `POCKETDOCK_AUTO` | `1` giống thêm `--auto`: tự bật máy chủ và đường hầm | tắt |
+| `POCKETDOCK_SERVER_HOME` | Thư mục máy chủ đã build, dùng cho `--auto` | tự tìm |
+| `POCKETDOCK_CLOUDFLARED` | Đường dẫn cloudflared, dùng cho `--auto` | tự tìm hoặc tự tải (Windows) |
 
 "Tự chọn theo hệ điều hành" nghĩa là bật trên Windows và tắt trên hệ điều hành khác. Chất lượng chụp màn hình (720p hoặc 1080p) chọn trong tab Cài đặt của ứng dụng.
 

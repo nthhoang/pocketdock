@@ -1,0 +1,23 @@
+PocketDock - hướng dẫn chạy nhanh trên Windows
+
+1. Cần có sẵn
+- Máy tính Windows 10/11 có kết nối Internet (để tạo địa chỉ HTTPS cho điện thoại).
+- Điện thoại dùng Safari hoặc Chrome, cùng mạng Wi-Fi với máy tính.
+- Muốn đưa webcam và micro của điện thoại vào Zoom hoặc Teams: cài OBS Studio (có OBS Virtual Camera) và VB-Cable.
+
+2. Chạy
+- Bấm đúp Chay-PocketDock.bat.
+- Lần đầu chương trình tự tải cloudflared (công cụ tạo địa chỉ HTTPS) về thư mục .pocketdock\tools trong thư mục người dùng, có thể mất vài phút tùy mạng.
+- Chờ cửa sổ PocketDock hiện mã QR, quét bằng điện thoại, rồi bấm "Cho phép" trên máy tính.
+- Đóng cửa sổ PocketDock thì máy chủ và đường hầm cũng tự tắt.
+
+3. Nếu Windows hiện cảnh báo SmartScreen
+Bấm "Thông tin thêm" rồi "Vẫn chạy". Bản này chưa được ký số.
+
+4. Kiểm tra máy trước khi dùng
+- Mở cửa sổ dòng lệnh trong thư mục này và chạy: PocketDock.exe --selftest
+- Kết quả được ghi vào ketqua\selftest.txt.
+- Trong ứng dụng có nút "Xuất báo cáo lỗi" để lưu báo cáo gửi cho người hỗ trợ.
+
+5. Nhật ký
+Các file nhật ký nằm trong thư mục ketqua: m4-nhat-ky.txt (ứng dụng), may-chu.log (máy chủ), duong-ham.log (cloudflared).

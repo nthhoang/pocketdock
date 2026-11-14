@@ -3,6 +3,8 @@ on:
   push:
     paths:
       - 'desktop/**'
+      - 'server/**'
+      - 'web/**'
       - '.github/workflows/build-desktop.yml'
   workflow_dispatch:
 
@@ -29,6 +31,13 @@ jobs:
           ls -la audio-helper/publish
           ./audio-helper/publish/PocketDock.AudioHelper.exe --version
 
+      - name: Build máy chủ để đóng gói cùng
+        run: |
+          cd ../server
+          ./gradlew installDist
+          ls build/install/pocketdock-server/lib
+          test -f build/install/pocketdock-server/bin/pocketdock-server.bat
+
       - name: Build và chạy test
         run: ./gradlew build
 
@@ -42,8 +51,9 @@ jobs:
       - name: Tìm các module Java cần cho bản đóng gói
         id: mods
         run: |
+          SRV=../server/build/install/pocketdock-server/lib
           MODS=$(jdeps --ignore-missing-deps --multi-release 21 --print-module-deps \
-            --class-path 'app/build/install/app/lib/*' app/build/install/app/lib/app.jar) || MODS=java.base
+            --class-path "app/build/install/app/lib/*;$SRV/*" app/build/install/app/lib/app.jar $SRV/pocketdock-server-*.jar) || MODS=java.base
           EXTRA=java.sql,java.net.http,java.desktop,java.logging,java.management,java.naming,java.xml,java.prefs,jdk.unsupported,jdk.crypto.ec
           echo "jdeps: $MODS"
           echo "list=$MODS,$EXTRA" >> "$GITHUB_OUTPUT"
@@ -61,6 +71,13 @@ jobs:
           mkdir -p dist/PocketDock/audio-helper
           cp -r audio-helper/publish/* dist/PocketDock/audio-helper/
 
+      - name: Chép máy chủ, trang web và file chạy nhanh vào bản đóng gói
+        run: |
+          mkdir -p dist/PocketDock/server dist/PocketDock/web
+          cp -r ../server/build/install/pocketdock-server/* dist/PocketDock/server/
+          cp -r ../web/* dist/PocketDock/web/
+          cp pack/Chay-PocketDock.bat pack/HUONG-DAN.txt dist/PocketDock/
+
       - name: Kiểm tra bản đóng gói có đủ thư viện
         run: |
           echo "--- dist/PocketDock ---"
@@ -76,8 +93,28 @@ jobs:
           test -f dist/PocketDock/audio-helper/PocketDock.AudioHelper.exe
           ls dist/PocketDock/audio-helper | grep -i "NAudio"
           dist/PocketDock/audio-helper/PocketDock.AudioHelper.exe --version
+          test -f dist/PocketDock/server/bin/pocketdock-server.bat
+          test -f dist/PocketDock/web/index.html
+          test -f dist/PocketDock/Chay-PocketDock.bat
           echo "--- module trong runtime ---"
           ls dist/PocketDock/runtime/bin; dist/PocketDock/runtime/bin/java.exe --list-modules || true
+
+      - name: Chạy thử máy chủ đóng gói bằng runtime đi kèm
+        run: |
+          export JAVA_HOME="$(pwd -W)/dist/PocketDock/runtime"
+          export WEB_DIR="$(pwd -W)/dist/PocketDock/web"
+          export PORT=18081
+          cmd //c "dist\\PocketDock\\server\\bin\\pocketdock-server.bat" > server-smoke.log 2>&1 &
+          ok=0
+          for i in $(seq 1 40); do
+            if curl -sf http://localhost:18081/health > /dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          echo "--- server-smoke.log ---"
+          tail -30 server-smoke.log || true
+          if [ "$ok" = 1 ]; then echo "may chu tra loi /health"; curl -s http://localhost:18081/ | head -c 300; echo; fi
+          powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine -like '*Application[K]t*' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" || true
+          test "$ok" = 1
 
       - name: Chạy thử bản đóng gói (--selftest)
         run: |

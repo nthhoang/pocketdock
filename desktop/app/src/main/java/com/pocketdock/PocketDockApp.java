@@ -885,6 +885,8 @@ public class PocketDockApp extends Application implements SignalingClient.Handle
     }
 
     private static String env(String key, String fallback) {
+        String forced = AutoStack.override(key);
+        if (forced != null) return forced;
         String value = System.getenv(key);
         return (value == null || value.isBlank()) ? fallback : value.trim();
     }
