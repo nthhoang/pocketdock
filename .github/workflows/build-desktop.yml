@@ -64,6 +64,7 @@ jobs:
           --input app/build/install/app/lib --main-jar app.jar
           --main-class com.pocketdock.App
           --add-modules "${{ steps.mods.outputs.list }}"
+          --jlink-options "--strip-debug --no-man-pages --no-header-files"
           --win-console --dest dist
 
       - name: Chép chương trình phụ âm thanh vào bản đóng gói
@@ -96,6 +97,7 @@ jobs:
           test -f dist/PocketDock/server/bin/pocketdock-server.bat
           test -f dist/PocketDock/web/index.html
           test -f dist/PocketDock/Chay-PocketDock.bat
+          test -f dist/PocketDock/runtime/bin/java.exe
           echo "--- module trong runtime ---"
           ls dist/PocketDock/runtime/bin; dist/PocketDock/runtime/bin/java.exe --list-modules || true
 
